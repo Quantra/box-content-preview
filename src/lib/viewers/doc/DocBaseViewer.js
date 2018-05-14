@@ -170,14 +170,15 @@ class DocBaseViewer extends BaseViewer {
 
         const { unit, value } = startAt;
 
-        if (!value || !unit) {
+        if ((value !== 0 && !value) || !unit) {
             return convertedValue;
         }
 
         if (unit === PAGES_UNIT_NAME) {
             convertedValue = parseInt(value, 10);
 
-            if (!convertedValue || convertedValue < 1) {
+            const testValue = convertedValue + this.pageOffset;
+            if (!testValue || testValue < 1) {
                 // Negative values aren't allowed, fall back to default behavior
                 return undefined;
             }
@@ -333,7 +334,7 @@ class DocBaseViewer extends BaseViewer {
         }
 
         // Go to page one so that we can find the first occurence in the document
-        this.setPage(1);
+        this.setPage(1 - this.pageOffset);
         this.findBar.setFindFieldElValue(phrase);
         this.findBar.findFieldHandler();
 
@@ -404,7 +405,7 @@ class DocBaseViewer extends BaseViewer {
      * @return {void}
      */
     setPage(pageNumber) {
-        const parsedPageNumber = parseInt(pageNumber, 10);
+        const parsedPageNumber = parseInt(pageNumber, 10) + this.pageOffset;
         if (!parsedPageNumber || parsedPageNumber < 1 || parsedPageNumber > this.pdfViewer.pagesCount) {
             return;
         }
@@ -914,7 +915,10 @@ class DocBaseViewer extends BaseViewer {
         const { pagesCount, currentScale } = this.pdfViewer;
 
         // Set page to the user-defined page, previously opened page, or first page
-        const startPage = this.startPageNum || this.getCachedPage();
+        let startPage = this.startPageNum;
+        if (!startPage && startPage !== 0) {
+            startPage = this.getCachedPage() - this.pageOffset;
+        }
         this.setPage(startPage);
 
         // Make document scrollable after pages are set up so scrollbars don't mess with autoscaling
@@ -972,7 +976,7 @@ class DocBaseViewer extends BaseViewer {
      */
     pagechangeHandler(event) {
         const { pageNumber } = event;
-        this.pageControls.updateCurrentPage(pageNumber);
+        this.pageControls.updateCurrentPage(pageNumber - this.pageOffset);
 
         // We only set cache the current page if 'pagechange' was fired after
         // preview is loaded - this filters out pagechange events fired by

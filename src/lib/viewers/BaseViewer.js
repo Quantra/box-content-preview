@@ -23,6 +23,7 @@ import {
     CLASS_HIDDEN,
     CLASS_BOX_PREVIEW_MOBILE,
     FILE_OPTION_START,
+    FILE_OPTION_OFFSET,
     SELECTOR_BOX_PREVIEW,
     SELECTOR_BOX_PREVIEW_BTN_ANNOTATE_POINT,
     SELECTOR_BOX_PREVIEW_BTN_ANNOTATE_DRAW,
@@ -109,6 +110,9 @@ class BaseViewer extends EventEmitter {
     /** @property {Object} - Viewer startAt options */
     startAt;
 
+    /** @property {number} - Viewer pageOffset */
+    pageOffset = 0;
+
     /** @property {boolean} - Has the viewer retried downloading the content */
     hasRetriedContentDownload = false;
 
@@ -152,6 +156,10 @@ class BaseViewer extends EventEmitter {
             const fileExt = this.options.file.extension;
             this.fileLoadingIcon = getIconFromExtension(fileExt);
             this.startAt = getProp(this.options, `fileOptions.${this.options.file.id}.${FILE_OPTION_START}`, {});
+            this.pageOffset = parseInt(
+                getProp(this.options, `fileOptions.${this.options.file.id}.${FILE_OPTION_OFFSET}`, 0),
+                10
+            );
         }
 
         this.finishLoadingSetup();

@@ -107,3 +107,4 @@ export const PREVIEW_SCRIPT_NAME = 'preview.js';
 
 export const FILE_OPTION_FILE_VERSION_ID = 'fileVersionId';
 export const FILE_OPTION_START = 'startAt';
+export const FILE_OPTION_OFFSET = 'pageOffset';

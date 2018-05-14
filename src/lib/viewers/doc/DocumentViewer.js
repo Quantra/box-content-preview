@@ -75,7 +75,10 @@ class DocumentViewer extends DocBaseViewer {
         this.controls.add(__('zoom_out'), this.zoomOut, 'bp-doc-zoom-out-icon', ICON_ZOOM_OUT);
         this.controls.add(__('zoom_in'), this.zoomIn, 'bp-doc-zoom-in-icon', ICON_ZOOM_IN);
 
-        this.pageControls.add(this.pdfViewer.currentPageNumber, this.pdfViewer.pagesCount);
+        this.pageControls.add(
+            this.pdfViewer.currentPageNumber - this.pageOffset,
+            this.pdfViewer.pagesCount - this.pageOffset
+        );
 
         this.controls.add(
             __('enter_fullscreen'),
