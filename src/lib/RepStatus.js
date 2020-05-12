@@ -1,6 +1,6 @@
 import EventEmitter from 'events';
-import { get, appendAuthParams } from './util';
-import { STATUS_SUCCESS, STATUS_VIEWABLE } from './constants';
+import { appendAuthParams } from './util';
+import { STATUS_SUCCESS, STATUS_VIEWABLE, STATUS_PENDING, STATUS_NONE } from './constants';
 import PreviewError from './PreviewError';
 import Timer from './Timer';
 import { ERROR_CODE, LOAD_METRIC } from './events';
@@ -8,6 +8,9 @@ import { ERROR_CODE, LOAD_METRIC } from './events';
 const STATUS_UPDATE_INTERVAL_MS = 2000;
 
 class RepStatus extends EventEmitter {
+    /** @property {Api} - Api used for XHR calls */
+    api;
+
     /**
      * Gets the status out of represenation
      *
@@ -37,6 +40,8 @@ class RepStatus extends EventEmitter {
     /**
      * [constructor]
      *
+     * @param {Object} options - Options object for representation status
+     * @param {Api} [options.api] - Optional Api layer for http calls
      * @param {Object} options.representation - Representation object
      * @param {string} options.token - Access token
      * @param {string} options.sharedLink - Shared link
@@ -45,8 +50,10 @@ class RepStatus extends EventEmitter {
      * @param {Object} [options.logger] - Optional logger instance
      * @return {RepStatus} RepStatus instance
      */
-    constructor({ representation, token, sharedLink, sharedLinkPassword, logger, fileId }) {
+    constructor({ api, representation, token, sharedLink, sharedLinkPassword, logger, fileId }) {
         super();
+
+        this.api = api;
         this.representation = representation;
         this.logger = logger;
         this.fileId = fileId;
@@ -84,7 +91,7 @@ class RepStatus extends EventEmitter {
         const tag = Timer.createTag(this.fileId, LOAD_METRIC.convertTime);
         Timer.start(tag);
 
-        return get(this.infoUrl).then((info) => {
+        return this.api.get(this.infoUrl).then(info => {
             clearTimeout(this.statusTimeout);
 
             if (info.metadata) {
@@ -127,6 +134,9 @@ class RepStatus extends EventEmitter {
                     case ERROR_CODE.CONVERSION_UNSUPPORTED_FORMAT:
                         errorMessage = __('error_bad_file');
                         break;
+                    case ERROR_CODE.CONVERSION_FAILED:
+                        errorMessage = __('error_reupload');
+                        break;
                     default:
                         errorMessage = __('error_refresh');
                         break;
@@ -142,8 +152,8 @@ class RepStatus extends EventEmitter {
                 this.resolve();
                 break;
 
-            case 'none':
-            case 'pending':
+            case STATUS_NONE:
+            case STATUS_PENDING:
                 // If we are doing some logging, log that the file needed conversion
                 if (this.logger) {
                     this.logger.setUnConverted();
@@ -151,10 +161,15 @@ class RepStatus extends EventEmitter {
 
                 this.emit('conversionpending');
 
-                // Check status again after delay
-                this.statusTimeout = setTimeout(() => {
-                    this.updateStatus();
-                }, STATUS_UPDATE_INTERVAL_MS);
+                // Check status again after delay or
+                // If status is none, request immediately since conversion
+                // won't kick off until representation is requested
+                this.statusTimeout = setTimeout(
+                    () => {
+                        this.updateStatus();
+                    },
+                    status === STATUS_NONE ? 0 : STATUS_UPDATE_INTERVAL_MS,
+                );
                 break;
 
             default:

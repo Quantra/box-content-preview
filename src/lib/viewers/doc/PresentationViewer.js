@@ -2,7 +2,6 @@ import throttle from 'lodash/throttle';
 import DocBaseViewer from './DocBaseViewer';
 import PresentationPreloader from './PresentationPreloader';
 import { CLASS_INVISIBLE } from '../../constants';
-import { ICON_FULLSCREEN_IN, ICON_FULLSCREEN_OUT, ICON_ZOOM_IN, ICON_ZOOM_OUT } from '../../icons/icons';
 import './Presentation.scss';
 
 const WHEEL_THROTTLE = 200;
@@ -23,7 +22,7 @@ class PresentationViewer extends DocBaseViewer {
         // Bind context for callbacks
         this.mobileScrollHandler = this.mobileScrollHandler.bind(this);
         this.pagesinitHandler = this.pagesinitHandler.bind(this);
-        this.pagechangeHandler = this.pagechangeHandler.bind(this);
+        this.pagechangingHandler = this.pagechangingHandler.bind(this);
         this.throttledWheelHandler = this.getWheelHandler().bind(this);
     }
 
@@ -31,16 +30,17 @@ class PresentationViewer extends DocBaseViewer {
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() to set up common layout
         super.setup();
         this.docEl.classList.add('bp-doc-presentation');
 
         // Set up preloader
-        this.preloader = new PresentationPreloader(this.previewUI);
-        this.preloader.addListener('preload', () => {
-            this.options.logger.setPreloaded();
-            this.resetLoadTimeout(); // Some content is visible - reset load timeout
-        });
+        this.preloader = new PresentationPreloader(this.previewUI, { api: this.api });
+        this.preloader.addListener('preload', this.onPreload.bind(this));
     }
 
     /**
@@ -63,7 +63,7 @@ class PresentationViewer extends DocBaseViewer {
 
         // Hide all pages
         const pages = this.docEl.querySelectorAll('.page');
-        [].forEach.call(pages, (pageEl) => {
+        [].forEach.call(pages, pageEl => {
             pageEl.classList.add(CLASS_INVISIBLE);
         });
 
@@ -89,7 +89,8 @@ class PresentationViewer extends DocBaseViewer {
         if (key === 'ArrowUp') {
             this.previousPage();
             return true;
-        } else if (key === 'ArrowDown') {
+        }
+        if (key === 'ArrowDown') {
             this.nextPage();
             return true;
         }
@@ -181,30 +182,6 @@ class PresentationViewer extends DocBaseViewer {
     }
 
     /**
-     * Adds event listeners for presentation controls
-     *
-     * @override
-     * @return {void}
-     * @protected
-     */
-    bindControlListeners() {
-        super.bindControlListeners();
-
-        this.controls.add(__('zoom_out'), this.zoomOut, 'bp-exit-zoom-out-icon', ICON_ZOOM_OUT);
-        this.controls.add(__('zoom_in'), this.zoomIn, 'bp-enter-zoom-in-icon', ICON_ZOOM_IN);
-
-        this.pageControls.add(this.pdfViewer.currentPageNumber, this.pdfViewer.pagesCount);
-
-        this.controls.add(
-            __('enter_fullscreen'),
-            this.toggleFullscreen,
-            'bp-enter-fullscreen-icon',
-            ICON_FULLSCREEN_IN
-        );
-        this.controls.add(__('exit_fullscreen'), this.toggleFullscreen, 'bp-exit-fullscreen-icon', ICON_FULLSCREEN_OUT);
-    }
-
-    /**
      * Handler for mobile scroll events.
      *
      * @param {Object} event - Scroll event
@@ -246,7 +223,7 @@ class PresentationViewer extends DocBaseViewer {
     pagesinitHandler() {
         // We implement presentation mode by hiding other pages except for the first page
         const pageEls = [].slice.call(this.docEl.querySelectorAll('.pdfViewer .page'), 0);
-        pageEls.forEach((pageEl) => {
+        pageEls.forEach(pageEl => {
             if (pageEl.getAttribute('data-page-number') === '1') {
                 return;
             }
@@ -267,9 +244,9 @@ class PresentationViewer extends DocBaseViewer {
      * @param {event} e - Page change event
      * @return {void}
      */
-    pagechangeHandler(e) {
+    pagechangingHandler(e) {
         this.setPage(e.pageNumber);
-        super.pagechangeHandler(e);
+        super.pagechangingHandler(e);
     }
 
     /**
@@ -278,7 +255,7 @@ class PresentationViewer extends DocBaseViewer {
      * @return {Function} Throttled wheel handler
      */
     getWheelHandler() {
-        return throttle((event) => {
+        return throttle(event => {
             // Should not change pages if there is overflow, horizontal movement or a lack of vertical movement
             if (event.deltaY === 0 || event.deltaX !== 0 || this.checkOverflow()) {
                 return;
@@ -304,7 +281,13 @@ class PresentationViewer extends DocBaseViewer {
      */
     overwritePdfViewerBehavior() {
         // Overwrite scrollPageIntoView for presentations since we have custom pagination behavior
-        this.pdfViewer.scrollPageIntoView = (pageObj) => {
+        // This override is needed to allow PDF.js to change pages when clicking on links in a presentation that
+        // navigate to other pages
+        this.pdfViewer.scrollPageIntoView = pageObj => {
+            if (!this.loaded) {
+                return;
+            }
+
             let pageNum = pageObj;
             if (typeof pageNum !== 'number') {
                 pageNum = pageObj.pageNumber || 1;
@@ -312,7 +295,6 @@ class PresentationViewer extends DocBaseViewer {
 
             this.setPage(pageNum);
         };
-
         // Overwrite _getVisiblePages for presentations to always calculate instead of fetching visible
         // elements since we lay out presentations differently
         this.pdfViewer._getVisiblePages = () => {
@@ -320,14 +302,14 @@ class PresentationViewer extends DocBaseViewer {
             const visible = [
                 {
                     id: currentPageObj.id,
-                    view: currentPageObj
-                }
+                    view: currentPageObj,
+                },
             ];
 
             return {
                 first: currentPageObj,
                 last: currentPageObj,
-                views: visible
+                views: visible,
             };
         };
     }

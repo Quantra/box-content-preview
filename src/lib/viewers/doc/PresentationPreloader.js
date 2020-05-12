@@ -9,23 +9,14 @@ class PresentationPreloader extends DocPreloader {
      */
     maxZoomScale = 0;
 
-    /** @property {HTMLElement} - Preload container element */
-    preloadEl;
-
-    /** @property {PreviewUI} - Preview's UI instance */
-    previewUI;
-
-    /** @property {string} - Class name for preload wrapper */
-    wrapperClassName;
-
     /**
      * [constructor]
      *
      * @param {PreviewUI} previewUI - UI instance
      * @return {PresentationPreloader} PresentationPreloader instance
      */
-    constructor(previewUI) {
-        super(previewUI);
+    constructor(previewUI, options) {
+        super(previewUI, options);
 
         this.wrapperClassName = CLASS_BOX_PREVIEW_PRELOAD_WRAPPER_PRESENTATION;
     }

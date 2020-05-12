@@ -1,6 +1,6 @@
 /* eslint-disable no-unused-expressions */
 import Controls from '../Controls';
-import { CLASS_HIDDEN } from './../constants';
+import { CLASS_HIDDEN } from '../constants';
 
 let controls;
 let clock;
@@ -35,11 +35,6 @@ describe('lib/Controls', () => {
         it('should create the correct DOM structure', () => {
             expect(controls.containerEl).to.equal(document.getElementById('test-controls-container'));
 
-            const controlsWrapperEl = controls.controlsEl.parentNode;
-            expect(controlsWrapperEl.parentNode).to.equal(controls.containerEl);
-            expect(controlsWrapperEl.classList.contains('bp-controls-wrapper')).to.true;
-
-            expect(controls.controlsEl.parentNode).to.equal(controlsWrapperEl);
             expect(controls.controlsEl.classList.contains('bp-controls')).to.true;
         });
     });
@@ -63,11 +58,11 @@ describe('lib/Controls', () => {
         it('should remove click listeners for any button references', () => {
             const button1 = {
                 button: { removeEventListener: sandbox.stub() },
-                handler: 'handler'
+                handler: 'handler',
             };
             const button2 = {
                 button: { removeEventListener: sandbox.stub() },
-                handler: 'handler'
+                handler: 'handler',
             };
             controls.buttonRefs = [button1, button2];
 
@@ -260,6 +255,10 @@ describe('lib/Controls', () => {
     });
 
     describe('add()', () => {
+        beforeEach(() => {
+            sandbox.stub(controls.buttonRefs, 'push');
+        });
+
         it('should create a button with the right attributes', () => {
             const btn = controls.add('test button', sandbox.stub(), 'test1', 'test content');
             expect(btn.attributes.title.value).to.equal('test button');
@@ -267,6 +266,32 @@ describe('lib/Controls', () => {
             expect(btn.classList.contains('test1')).to.be.true;
             expect(btn.innerHTML).to.equal('test content');
             expect(btn.parentNode.parentNode).to.equal(controls.controlsEl);
+            expect(controls.buttonRefs.push).to.be.called;
+        });
+
+        it('should create a span if specified', () => {
+            const span = controls.add('test span', null, 'span1', 'test content', 'span');
+            expect(span.attributes.title.value).to.equal('test span');
+            expect(span.attributes['aria-label'].value).to.equal('test span');
+            expect(span.classList.contains('span1')).to.be.true;
+            expect(span.classList.contains('bp-controls-btn')).to.be.false;
+            expect(span.innerHTML).to.equal('test content');
+            expect(span.parentNode.parentNode).to.equal(controls.controlsEl);
+            expect(controls.buttonRefs.push).not.to.be.called;
+        });
+
+        it('should append the controls to the provided element', () => {
+            const div = controls.addGroup('test-group');
+            const btn = controls.add('test button', sandbox.stub(), 'test1', 'test content', undefined, div);
+            expect(btn.parentNode.parentNode).to.equal(div);
+        });
+    });
+
+    describe('addGroup()', () => {
+        it('should create a controls group within the controls element', () => {
+            const div = controls.addGroup('test-group');
+            expect(div.parentNode).to.equal(controls.controlsEl);
+            expect(div.classList.contains('test-group'));
         });
     });
 

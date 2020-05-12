@@ -3,8 +3,8 @@ const webpackConfig = require('./webpack.karma.config');
 
 // These should be updated to match the Preview version in package.json whenever a file in that third party directory
 // is updated. Also, update the matching configuration in constants.js, which is needed for main preview functionality
-const DOC_STATIC_ASSETS_VERSION = '1.17.0';
-const MEDIA_STATIC_ASSETS_VERSION = '1.33.0';
+const DOC_STATIC_ASSETS_VERSION = '2.16.0';
+const MEDIA_STATIC_ASSETS_VERSION = '2.14.0';
 const MODEL3D_STATIC_ASSETS_VERSION = '1.12.0';
 const SWF_STATIC_ASSETS_VERSION = '0.112.0';
 const TEXT_STATIC_ASSETS_VERSION = '0.114.0';
@@ -38,93 +38,89 @@ const getTestFile = (src) => {
     ];
 };
 
-module.exports = (config) => config.set({
-    autoWatch: false,
+module.exports = config =>
+    config.set({
+        autoWatch: false,
 
-    basePath: '..',
+        basePath: '..',
 
-    browserConsoleLogOptions: {
-        level: 'log',
-        format: '%b %T: %m',
-        terminal: true
-    },
-
-    browsers: ['PhantomJS'],
-
-    browserNoActivityTimeout: 100000,
-
-    captureConsole: true,
-
-    colors: true,
-
-    coverageReporter: {
-        check: config.src ? {} : {
-            global: {
-                statements: 80,
-                branches: 80,
-                functions: 80,
-                lines: 80
-            }
+        browserConsoleLogOptions: {
+            level: 'log',
+            format: '%b %T: %m',
+            terminal: true,
         },
-        reporters: [
-            {
-                type: 'html',
-                dir: 'reports/coverage/html'
-            },
-            {
-                type: 'cobertura',
-                dir: 'reports/coverage/cobertura'
-            },
-            { type: 'text' }
-        ]
-    },
 
-    junitReporter: {
-        outputDir: 'reports/coverage/junit',
-        outputFile: 'junit.xml'
-    },
+        browsers: ['PhantomJS'],
 
-    frameworks: [
-        'mocha',
-        'chai-dom',
-        'chai',
-        'sinon',
-        'sinon-chai',
-        'fixture'
-    ],
+        browserNoActivityTimeout: 100000,
 
-    files: [
-        'https://cdn01.boxcdn.net/polyfills/core-js/2.5.3/core.min.js',
-        `src/third-party/model3d/${MODEL3D_STATIC_ASSETS_VERSION}/three.min.js`,
-        `src/third-party/doc/${DOC_STATIC_ASSETS_VERSION}/**/*.js`,
-        `src/third-party/media/${MEDIA_STATIC_ASSETS_VERSION}/**/*.js`,
-        `src/third-party/model3d/${MODEL3D_STATIC_ASSETS_VERSION}/**/*.js`,
-        `src/third-party/swf/${SWF_STATIC_ASSETS_VERSION}/**/*.js`,
-        `src/third-party/text/${TEXT_STATIC_ASSETS_VERSION}/**/*.js`
-    ].concat(getTestFile(config.src)),
+        captureConsole: true,
 
-    exclude: [],
+        colors: true,
 
-    preprocessors: {
-        'src/lib/**/*-test.js': ['webpack', 'sourcemap'],
-        'src/lib/**/*-test.html': ['html2js']
-    },
+        coverageReporter: {
+            check: config.src
+                ? {}
+                : {
+                      global: {
+                          statements: 80,
+                          branches: 80,
+                          functions: 80,
+                          lines: 80,
+                      },
+                  },
+            reporters: [
+                {
+                    type: 'html',
+                    dir: 'reports/coverage/html',
+                },
+                {
+                    type: 'cobertura',
+                    dir: 'reports/coverage/cobertura',
+                },
+                { type: 'text' },
+            ],
+        },
 
-    phantomjsLauncher: {
-        exitOnResourceError: false
-    },
+        junitReporter: {
+            outputDir: 'reports/coverage/junit',
+            outputFile: 'junit.xml',
+        },
 
-    port: 9876,
+        frameworks: ['mocha', 'chai-dom', 'chai', 'sinon', 'sinon-chai', 'fixture', 'intl-shim'],
 
-    reporters: ['mocha', 'coverage', 'junit'],
+        files: [
+            'https://cdn01.boxcdn.net/polyfills/core-js/2.5.3/core.min.js',
+            `src/third-party/model3d/${MODEL3D_STATIC_ASSETS_VERSION}/three.min.js`,
+            `src/third-party/doc/${DOC_STATIC_ASSETS_VERSION}/**/*.js`,
+            `src/third-party/media/${MEDIA_STATIC_ASSETS_VERSION}/**/*.js`,
+            `src/third-party/model3d/${MODEL3D_STATIC_ASSETS_VERSION}/**/*.js`,
+            `src/third-party/swf/${SWF_STATIC_ASSETS_VERSION}/**/*.js`,
+            `src/third-party/text/${TEXT_STATIC_ASSETS_VERSION}/**/*.js`,
+            'build/karma.setup.react.js',
+        ].concat(getTestFile(config.src)),
 
-    logLevel: config.LOG_ERROR,
+        preprocessors: {
+            'build/karma.setup.react.js': ['webpack', 'sourcemap'],
+            'src/**/__tests__/**/*-test.js': ['webpack', 'sourcemap'],
+            'src/**/__tests__/**/*-test.html': ['html2js'],
+        },
 
-    singleRun: true,
+        phantomjsLauncher: {
+            exitOnResourceError: false,
+        },
 
-    webpack: webpackConfig,
+        port: 9876,
 
-    webpackMiddleware: {
-        noInfo: true
-    }
-});
+        reporters: ['mocha', 'coverage', 'junit'],
+
+        logLevel: config.LOG_ERROR,
+
+        singleRun: true,
+
+        webpack: webpackConfig,
+
+        webpackMiddleware: {
+            noInfo: true,
+        },
+    });

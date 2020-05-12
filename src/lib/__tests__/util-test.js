@@ -1,8 +1,7 @@
 /* eslint-disable no-unused-expressions */
-import 'whatwg-fetch';
-import fetchMock from 'fetch-mock';
 import Location from '../Location';
 import * as util from '../util';
+import { ERROR_CODE } from '../events';
 import DownloadReachability from '../DownloadReachability';
 
 const sandbox = sinon.sandbox.create();
@@ -10,165 +9,6 @@ const sandbox = sinon.sandbox.create();
 describe('lib/util', () => {
     afterEach(() => {
         sandbox.verifyAndRestore();
-    });
-
-    describe('get()', () => {
-        let url;
-        beforeEach(() => {
-            url = 'foo?bar=bum';
-        });
-
-        afterEach(() => {
-            fetchMock.restore();
-        });
-
-        it('should call fetch on the URL', () => {
-            fetchMock.get(url, {});
-            return util.get(url).then(() => {
-                expect(fetchMock.called(url)).to.be.true;
-            });
-        });
-
-        it('should call fetch on URL but fail when status is 404', () => {
-            fetchMock.get(url, { status: 404 });
-            return util.get(url).catch((err) => {
-                expect(fetchMock.called(url)).to.be.true;
-                expect(err.response.status).to.equal(404);
-                expect(err.response.statusText).to.equal('Not Found');
-            });
-        });
-
-        it('should call fetch on URL with headers', () => {
-            const headers = { darth: 'vader' };
-            fetchMock.get(url, {});
-
-            return util.get(url, headers).then(() => {
-                expect(fetchMock.called(url)).to.be.true;
-                expect(fetchMock.lastOptions(url).headers).to.deep.equal(headers);
-            });
-        });
-
-        it('should call fetch on URL with headers and type text', () => {
-            const responseText = 'lukeskywalker';
-            const headers = { baz: 'but' };
-            fetchMock.get(url, {
-                body: responseText,
-                sendAsJson: false
-            });
-
-            return util.get(url, headers, 'text').then((response) => {
-                expect(fetchMock.called(url)).to.be.true;
-                expect(response).to.equal(responseText);
-                expect(fetchMock.lastOptions(url).headers).to.deep.equal(headers);
-            });
-        });
-
-        it('should call fetch on URL with type blob', () => {
-            const blob = new Blob(['text'], { type: 'text/plain' });
-            fetchMock.get(url, {
-                body: blob,
-                sendAsJson: false
-            });
-
-            return util.get(url, 'blob').then((response) => {
-                expect(fetchMock.called(url)).to.be.true;
-                expect(response).to.deep.equal(blob);
-            });
-        });
-
-        it('should call fetch on URL with type text', () => {
-            const responseText = 'darthsidious';
-            fetchMock.get(url, {
-                body: responseText,
-                sendAsJson: false
-            });
-
-            return util.get(url, 'text').then((response) => {
-                expect(fetchMock.called(url)).to.be.true;
-                expect(response).to.equal(responseText);
-            });
-        });
-
-        it('should call get on URL with type any', () => {
-            fetchMock.get(url, {
-                body: 'greedo',
-                sendAsJson: false
-            });
-
-            return util.get(url, 'any').then((response) => {
-                expect(fetchMock.called(url)).to.be.true;
-                expect(typeof response === 'object').to.be.true;
-            });
-        });
-    });
-
-    describe('post()', () => {
-        afterEach(() => {
-            fetchMock.restore();
-        });
-
-        it('should call post on URL', () => {
-            const url = 'someurl';
-            const data = { bar: 'bum' };
-            const headers = { baz: 'but' };
-
-            fetchMock.post(url, {
-                body: {
-                    foo: 'bar'
-                }
-            });
-
-            return util.post(url, headers, data).then(() => {
-                expect(JSON.parse(fetchMock.lastOptions(url).body)).to.deep.equal(data);
-                expect(fetchMock.lastOptions(url).headers).to.deep.equal(headers);
-            });
-        });
-    });
-
-    describe('del()', () => {
-        afterEach(() => {
-            fetchMock.restore();
-        });
-
-        it('should call delete on URL', () => {
-            const url = 'someurl';
-            const data = { bar: 'bum' };
-            const headers = { baz: 'but' };
-
-            fetchMock.delete(url, {
-                body: {
-                    foo: 'bar'
-                }
-            });
-
-            return util.del(url, headers, data).then(() => {
-                expect(JSON.parse(fetchMock.lastOptions(url).body)).to.deep.equal(data);
-                expect(fetchMock.lastOptions(url).headers).to.deep.equal(headers);
-            });
-        });
-    });
-
-    describe('put()', () => {
-        afterEach(() => {
-            fetchMock.restore();
-        });
-
-        it('should call put on URL', () => {
-            const url = 'someurl';
-            const data = { bar: 'bum' };
-            const headers = { baz: 'but' };
-
-            fetchMock.put(url, {
-                body: {
-                    foo: 'bar'
-                }
-            });
-
-            return util.put(url, headers, data).then(() => {
-                expect(JSON.parse(fetchMock.lastOptions(url).body)).to.deep.equal(data);
-                expect(fetchMock.lastOptions(url).headers).to.deep.equal(headers);
-            });
-        });
     });
 
     describe('iframe', () => {
@@ -283,8 +123,8 @@ describe('lib/util', () => {
             expect(
                 util.appendQueryParams(url, {
                     foo: 'bar',
-                    baz: 'boo'
-                })
+                    baz: 'boo',
+                }),
             ).to.equal(`${url}/?foo=bar&baz=boo`);
         });
 
@@ -293,8 +133,8 @@ describe('lib/util', () => {
             expect(
                 util.appendQueryParams(url, {
                     foo: 'bar',
-                    baz: 'boo'
-                })
+                    baz: 'boo',
+                }),
             ).to.equal('foo/?test=hah&foo=bar&baz=boo');
         });
 
@@ -303,8 +143,8 @@ describe('lib/util', () => {
             expect(
                 util.appendQueryParams(url, {
                     foo: 'bar',
-                    baz: 'boo'
-                })
+                    baz: 'boo',
+                }),
             ).to.equal('test.com/?foo=bar&baz=boo');
         });
     });
@@ -320,7 +160,7 @@ describe('lib/util', () => {
             const token = 'sometoken';
             const sharedLink = 'someSharedLink';
             expect(util.appendAuthParams(url, token, sharedLink)).to.equal(
-                `${url}/?access_token=${token}&shared_link=${sharedLink}&box_client_name=${__NAME__}&box_client_version=${__VERSION__}`
+                `${url}/?access_token=${token}&shared_link=${sharedLink}&box_client_name=${__NAME__}&box_client_version=${__VERSION__}`,
             );
         });
 
@@ -330,7 +170,7 @@ describe('lib/util', () => {
             const sharedLink = 'someSharedLink';
             const sharedLinkPassword = 'somePass';
             expect(util.appendAuthParams(url, token, sharedLink, sharedLinkPassword)).to.equal(
-                `${url}/?access_token=${token}&shared_link=${sharedLink}&shared_link_password=${sharedLinkPassword}&box_client_name=${__NAME__}&box_client_version=${__VERSION__}`
+                `${url}/?access_token=${token}&shared_link=${sharedLink}&shared_link_password=${sharedLinkPassword}&box_client_name=${__NAME__}&box_client_version=${__VERSION__}`,
             );
         });
     });
@@ -362,7 +202,7 @@ describe('lib/util', () => {
         it('should return a function to create asset urls', () => {
             const location = {
                 baseURI: 'base/',
-                staticBaseURI: 'static/'
+                staticBaseURI: 'static/',
             };
             const assetUrlCreator = util.createAssetUrlCreator(location);
             assert.equal(typeof assetUrlCreator, 'function');
@@ -426,7 +266,7 @@ describe('lib/util', () => {
                 assert.ok(head.querySelector('script[src="bar"]') instanceof HTMLScriptElement);
             });
 
-            it('should disable AMD until scripts are loaded or fail to load', () => {
+            it.skip('should disable AMD until scripts are loaded or fail to load', () => {
                 /* eslint-disable require-jsdoc */
                 const defineFunc = () => {};
                 /* eslint-enable require-jsdoc */
@@ -476,14 +316,14 @@ describe('lib/util', () => {
             it('should throw an error when foobar.js is not found', () => {
                 expect(() => util.findScriptLocation('fobar.js')).to.throw(
                     Error,
-                    /Missing or malformed fobar.js library/
+                    /Missing or malformed fobar.js library/,
                 );
             });
             it('should throw an error when foobar.js is not found via script tag', () => {
                 const script = document.querySelector('script[src*="/file.js"]');
                 expect(() => util.findScriptLocation('fobar.js', script)).to.throw(
                     Error,
-                    /Missing or malformed fobar.js library/
+                    /Missing or malformed fobar.js library/,
                 );
             });
         });
@@ -493,101 +333,101 @@ describe('lib/util', () => {
         it('should return empty when no key', () => {
             assert.equal(
                 util.decodeKeydown({
-                    key: ''
+                    key: '',
                 }),
-                ''
+                '',
             );
         });
         it('should return empty when modifier and key are same', () => {
             assert.equal(
                 util.decodeKeydown({
                     key: 'Control',
-                    ctrlKey: true
+                    ctrlKey: true,
                 }),
-                ''
+                '',
             );
         });
         it('should return correct with ctrl modifier', () => {
             assert.equal(
                 util.decodeKeydown({
                     key: '1',
-                    ctrlKey: true
+                    ctrlKey: true,
                 }),
-                'Control+1'
+                'Control+1',
             );
         });
         it('should return correct with shift modifier', () => {
             assert.equal(
                 util.decodeKeydown({
                     key: '1',
-                    shiftKey: true
+                    shiftKey: true,
                 }),
-                'Shift+1'
+                'Shift+1',
             );
         });
         it('should return correct with meta modifier', () => {
             assert.equal(
                 util.decodeKeydown({
                     key: '1',
-                    metaKey: true
+                    metaKey: true,
                 }),
-                'Meta+1'
+                'Meta+1',
             );
         });
         it('should return space key', () => {
             assert.equal(
                 util.decodeKeydown({
-                    key: ' '
+                    key: ' ',
                 }),
-                'Space'
+                'Space',
             );
         });
         it('should return right arrow key', () => {
             assert.equal(
                 util.decodeKeydown({
-                    key: 'Right'
+                    key: 'Right',
                 }),
-                'ArrowRight'
+                'ArrowRight',
             );
         });
         it('should return left arrow key', () => {
             assert.equal(
                 util.decodeKeydown({
-                    key: 'Left'
+                    key: 'Left',
                 }),
-                'ArrowLeft'
+                'ArrowLeft',
             );
         });
         it('should return up arrow key', () => {
             assert.equal(
                 util.decodeKeydown({
-                    key: 'Up'
+                    key: 'Up',
                 }),
-                'ArrowUp'
+                'ArrowUp',
             );
         });
         it('should return down arrow key', () => {
             assert.equal(
                 util.decodeKeydown({
-                    key: 'Down'
+                    key: 'Down',
                 }),
-                'ArrowDown'
+                'ArrowDown',
             );
         });
         it('should return esc key', () => {
             assert.equal(
                 util.decodeKeydown({
-                    key: 'U+001B'
+                    key: 'U+001B',
                 }),
-                'Escape'
+                'Escape',
             );
         });
         it('should decode correct UTF8 key', () => {
             assert.equal(
                 util.decodeKeydown({
-                    key: 'U+0041'
+                    key: 'U+0041',
                 }),
-                'A'
+                'A',
             );
         });
     });
@@ -647,11 +487,11 @@ describe('lib/util', () => {
             const previousScrollTop = 0;
             const currentPageEl = {
                 offsetTop: 0,
-                clientHeight: 200
+                clientHeight: 200,
             };
             const wrapperEl = {
                 scrollTop: 101,
-                offsetHeight: 500
+                offsetHeight: 500,
             };
 
             const result = util.pageNumberFromScroll(currentPageNum, previousScrollTop, currentPageEl, wrapperEl);
@@ -663,11 +503,11 @@ describe('lib/util', () => {
             const previousScrollTop = 0;
             const currentPageEl = {
                 offsetTop: 0,
-                clientHeight: 200
+                clientHeight: 200,
             };
             const wrapperEl = {
                 scrollTop: 99,
-                offsetHeight: 500
+                offsetHeight: 500,
             };
 
             const result = util.pageNumberFromScroll(currentPageNum, previousScrollTop, currentPageEl, wrapperEl);
@@ -679,11 +519,11 @@ describe('lib/util', () => {
             const previousScrollTop = 500;
             const currentPageEl = {
                 offsetTop: 100,
-                clientHeight: 200
+                clientHeight: 200,
             };
             const wrapperEl = {
                 scrollTop: 0,
-                offsetHeight: 100
+                offsetHeight: 100,
             };
 
             const result = util.pageNumberFromScroll(currentPageNum, previousScrollTop, currentPageEl, wrapperEl);
@@ -695,11 +535,11 @@ describe('lib/util', () => {
             const previousScrollTop = 500;
             const currentPageEl = {
                 offsetTop: 0,
-                clientHeight: 200
+                clientHeight: 200,
             };
             const wrapperEl = {
                 scrollTop: 10,
-                offsetHeight: 100
+                offsetHeight: 100,
             };
 
             const result = util.pageNumberFromScroll(currentPageNum, previousScrollTop, currentPageEl, wrapperEl);
@@ -728,22 +568,22 @@ describe('lib/util', () => {
                 offsetLeft: 0,
                 offsetTop: 0,
                 scrollWidth: 0,
-                scrollHeight: 0
+                scrollHeight: 0,
             };
             const page2 = {
                 id: 2,
                 offsetLeft: 100,
                 offsetTop: 0,
                 scrollWidth: 100,
-                scrollHeight: 0
+                scrollHeight: 0,
             };
             const visiblePages = {
                 first: {
-                    id: 1
+                    id: 1,
                 },
                 last: {
-                    id: 2
-                }
+                    id: 2,
+                },
             };
 
             const midpointStub = sandbox.stub(document, 'querySelector');
@@ -763,7 +603,7 @@ describe('lib/util', () => {
 
             result = util.getClosestPageToPinch(0, 0, {
                 first: null,
-                last: null
+                last: null,
             });
 
             expect(result).to.equal(null);
@@ -795,11 +635,11 @@ describe('lib/util', () => {
             const a = {
                 b: {
                     c: 'value',
-                    b: ''
+                    b: '',
                 },
                 [someProp]: {
-                    value: 'test'
-                }
+                    value: 'test',
+                },
             };
 
             expect(util.getProp(a, 'b.c')).to.equal('value');
@@ -811,7 +651,7 @@ describe('lib/util', () => {
             const a = {
                 b: {},
                 test: undefined,
-                foo: null
+                foo: null,
             };
 
             expect(util.getProp(a, 'b.c', 'default')).to.equal('default');
@@ -849,7 +689,7 @@ describe('lib/util', () => {
             ['https://bar.app.boxcn.net', true],
             ['https://baz.ent.boxenterprise.net', true],
             ['https://haha.box.net', false],
-            ['https://some.other.domain', false]
+            ['https://some.other.domain', false],
         ].forEach(([hostname, expectedResult]) => {
             it('should return true when window location is a Box domain', () => {
                 sandbox.stub(Location, 'getHostname').returns(hostname);
@@ -859,12 +699,35 @@ describe('lib/util', () => {
     });
 
     describe('convertWatermarkPref()', () => {
-        [['any', ''], ['all', 'only_watermarked'], ['none', 'only_non_watermarked']].forEach(
-            ([previewWMPref, expected]) => {
-                it('should convert previewWMPref to value expected by the API', () => {
-                    expect(util.convertWatermarkPref(previewWMPref)).to.equal(expected);
-                });
-            }
-        );
+        [
+            ['any', ''],
+            ['all', 'only_watermarked'],
+            ['none', 'only_non_watermarked'],
+        ].forEach(([previewWMPref, expected]) => {
+            it('should convert previewWMPref to value expected by the API', () => {
+                expect(util.convertWatermarkPref(previewWMPref)).to.equal(expected);
+            });
+        });
+    });
+
+    describe('handleRepresentationBlobFetch()', () => {
+        it('should reject if the response is a 202', () => {
+            const response = {
+                status: 202,
+            };
+
+            util.handleRepresentationBlobFetch(response).catch(e => expect(e.code).to.equal(ERROR_CODE.DELETED_REPS));
+        });
+
+        it('should pass the response through', () => {
+            const response = {
+                status: 200,
+                body: 'body',
+            };
+
+            util.handleRepresentationBlobFetch(response).then(passedResponse =>
+                expect(passedResponse).to.equal(response),
+            );
+        });
     });
 });

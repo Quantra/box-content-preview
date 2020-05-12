@@ -1,96 +1,28 @@
 import Uri from 'jsuri';
-import 'whatwg-fetch';
-import { decode } from 'box-react-ui/lib/utils/keys';
+import { decode } from 'box-ui-elements/es/utils/keys';
 import DownloadReachability from './DownloadReachability';
 import Location from './Location';
+import PreviewError from './PreviewError';
+import { ERROR_CODE } from './events';
 
-const HEADER_CLIENT_NAME = 'X-Box-Client-Name';
-const HEADER_CLIENT_VERSION = 'X-Box-Client-Version';
+const CLIENT_NAME = __NAME__; // eslint-disable-line no-undef
 const CLIENT_NAME_KEY = 'box_client_name';
 const CLIENT_VERSION_KEY = 'box_client_version';
-/* eslint-disable no-undef */
-const CLIENT_NAME = __NAME__;
-export const CLIENT_VERSION = __VERSION__;
-/* eslint-enable no-undef */
+export const CLIENT_VERSION = __VERSION__; // eslint-disable-line no-undef
+const HEADER_CLIENT_NAME = 'X-Box-Client-Name';
+const HEADER_CLIENT_VERSION = 'X-Box-Client-Version';
+const PROMISE_MAP = {};
 
 /**
- * Retrieves JSON from response.
+ * Clears the promise map of any active promises
  *
  * @private
- * @param {Response} response - Response to parse
- * @return {Promise|Response} Response if 204, otherwise promise that resolves with JSON
+ * @return {void}
  */
-const parseJSON = (response) => {
-    if (response.status === 204) {
-        return response;
-    }
-
-    return response.json();
-};
-
-/**
- * Extract response body as text.
- *
- * @private
- * @param {Response} response - Response to parse
- * @return {Promise} Promise that resolves with text
- */
-const parseText = (response) => response.text();
-
-/**
- * Extract response body as blob.
- *
- * @private
- * @param {Response} response - Response to parse
- * @return {Promise} Promise that resolves with blob
- */
-const parseBlob = (response) => response.blob();
-
-/**
- * Pass through response.
- *
- * @private
- * @param {Response} response - Response to pass through
- * @return {Response} Unextracted response
- */
-const parseThrough = (response) => response;
-
-/**
- * Helper function to convert HTTP status codes into throwable errors
- *
- * @private
- * @param {Response} response - Fetch's Response object
- * @throws {Error} - Throws when the HTTP status is not 2XX
- * @return {Response} - Pass-thru the response if there are no errors
- */
-function checkStatus(response) {
-    if (response.status >= 200 && response.status < 300) {
-        return response;
-    }
-
-    const error = new Error(response.statusText);
-    error.response = response; // Need to pass response through so we can see what kind of HTTP error this was
-    throw error;
-}
-
-/**
- * Wrapper function for XHR post put and delete
- *
- * @private
- * @param {string} method - XHR method
- * @param {string} url - URL for XHR
- * @param {Object} headers - Request headers
- * @param {Object} data - Request data
- * @return {Promise} XHR promise
- */
-function xhr(method, url, headers = {}, data = {}) {
-    return fetch(url, {
-        headers,
-        method,
-        body: JSON.stringify(data)
-    })
-        .then(checkStatus)
-        .then(parseJSON);
+export function clearPromises() {
+    Object.keys(PROMISE_MAP).forEach(promiseKey => {
+        delete PROMISE_MAP[promiseKey];
+    });
 }
 
 /**
@@ -114,95 +46,6 @@ function createDownloadIframe() {
     // Clean the iframe up
     iframe.src = 'about:blank';
     return iframe;
-}
-
-/**
- * HTTP GETs a URL
- * Usage:
- *     get(url, headers, type)
- *     get(url, headers)
- *     get(url, type)
- *     get(url)
- *
- * @public
- * @param {string} url - The URL to fetch
- * @param {Object} [headers] - Key-value map of headers
- * @param {string} [type] - response type json (default), text, blob or any
- * @return {Promise} - HTTP response
- */
-export function get(url, ...rest) {
-    let headers;
-    let type;
-
-    if (typeof rest[0] === 'string') {
-        type = rest[0];
-    } else {
-        headers = rest[0];
-        type = rest[1];
-    }
-
-    headers = headers || {};
-    type = type || 'json';
-
-    let parser;
-    switch (type) {
-        case 'text':
-            parser = parseText;
-            break;
-        case 'blob':
-            parser = parseBlob;
-            break;
-        case 'any':
-            parser = parseThrough;
-            break;
-        case 'json':
-        default:
-            parser = parseJSON;
-            break;
-    }
-
-    return fetch(url, { headers })
-        .then(checkStatus)
-        .then(parser);
-}
-
-/**
- * HTTP POSTs a URL with JSON data
- *
- * @public
- * @param {string} url - The URL to fetch
- * @param {Object} headers - Key-value map of headers
- * @param {Object} data - JS Object representation of JSON data to send
- * @return {Promise} HTTP response
- */
-export function post(...rest) {
-    return xhr('post', ...rest);
-}
-
-/**
- * HTTP PUTs a URL with JSON data
- *
- * @public
- * @param {string} url - The URL to fetch
- * @param {Object} headers - Key-value map of headers
- * @param {Object} data - JS Object representation of JSON data to send
- * @return {Promise} HTTP response
- */
-export function del(...rest) {
-    return xhr('delete', ...rest);
-}
-
-/**
- * HTTP PUTs a url with JSON data
- *
- * @public
- * @param {string} url - The url to fetch
- * @param {Object} headers - Key-value map of headers
- * @param {Object} data - JS Object representation of JSON data to send
- * @return {Promise} HTTP response
- */
-export function put(...rest) {
-    return xhr('put', ...rest);
 }
 
 /**
@@ -363,7 +206,7 @@ export function appendQueryParams(url, queryParams) {
     }
 
     const uri = new Uri(url);
-    Object.keys(queryParams).forEach((key) => {
+    Object.keys(queryParams).forEach(key => {
         const value = queryParams[key];
         if (value) {
             if (uri.hasQueryParam(key)) {
@@ -397,7 +240,7 @@ export function appendAuthParams(url, token = '', sharedLink = '', password = ''
         shared_link: sharedLink,
         shared_link_password: password,
         [CLIENT_NAME_KEY]: CLIENT_NAME,
-        [CLIENT_VERSION_KEY]: CLIENT_VERSION
+        [CLIENT_VERSION_KEY]: CLIENT_VERSION,
     });
 }
 
@@ -427,7 +270,7 @@ export function createContentUrl(template, asset) {
 export function createAssetUrlCreator(location) {
     const { baseURI, staticBaseURI } = location;
 
-    return (name) => {
+    return name => {
         let asset;
 
         if (name.indexOf('http') === 0) {
@@ -457,7 +300,7 @@ export function prefetchAssets(urls, preload = false) {
     const { head } = document;
     const rel = preload ? 'preload' : 'prefetch';
 
-    urls.forEach((url) => {
+    urls.forEach(url => {
         if (!head.querySelector(`link[rel="${rel}"][href="${url}"]`)) {
             head.appendChild(createPrefetch(url, preload));
         }
@@ -474,7 +317,7 @@ export function prefetchAssets(urls, preload = false) {
 export function loadStylesheets(urls) {
     const { head } = document;
 
-    urls.forEach((url) => {
+    urls.forEach(url => {
         if (!head.querySelector(`link[rel="stylesheet"][href="${url}"]`)) {
             head.appendChild(createStylesheet(url));
         }
@@ -507,17 +350,18 @@ export function loadScripts(urls, disableAMD = false) {
         define = undefined;
     }
 
-    urls.forEach((url) => {
-        if (!head.querySelector(`script[src="${url}"]`)) {
+    urls.forEach(url => {
+        if (!head.querySelector(`script[src="${url}"]`) && !PROMISE_MAP[url]) {
             const script = createScript(url);
-            promises.push(
-                new Promise((resolve, reject) => {
-                    script.addEventListener('load', resolve);
-                    script.addEventListener('error', reject);
-                })
-            );
+            PROMISE_MAP[url] = new Promise((resolve, reject) => {
+                script.addEventListener('load', resolve);
+                script.addEventListener('error', reject);
+            });
+
             head.appendChild(script);
         }
+
+        promises.push(PROMISE_MAP[url]);
     });
 
     return Promise.all(promises)
@@ -525,11 +369,15 @@ export function loadScripts(urls, disableAMD = false) {
             if (disableAMD && amdPresent) {
                 define = defineRef;
             }
+
+            clearPromises();
         })
         .catch(() => {
             if (disableAMD && amdPresent) {
                 define = defineRef;
             }
+
+            clearPromises();
         });
 }
 
@@ -586,7 +434,7 @@ export function findScriptLocation(name, script) {
         locale,
         version,
         baseURI,
-        staticBaseURI
+        staticBaseURI,
     };
 }
 
@@ -606,7 +454,7 @@ export function replacePlaceholders(string, placeholderValues) {
         return string;
     }
 
-    return string.replace(regex, (match) => {
+    return string.replace(regex, match => {
         // extracting the index that is supposed to replace the matched placeholder
         const placeholderIndex = parseInt(match.replace(/^\D+/g, ''), 10) - 1;
 
@@ -654,7 +502,7 @@ export function setDimensions(element, width, height) {
  * @return {void}
  */
 export function activationHandler(handler) {
-    return (event) => {
+    return event => {
         if (event.type === 'click') {
             handler(event);
         } else if (event.type === 'keydown') {
@@ -769,13 +617,13 @@ export function getClosestPageToPinch(x, y, visiblePages) {
     }
 
     let closestPage = null;
-    for (let i = visiblePages.first.id, closestDistance = null; i <= visiblePages.last.id; i++) {
+    for (let i = visiblePages.first.id, closestDistance = null; i <= visiblePages.last.id; i += 1) {
         const page = document.querySelector(`#bp-page-${i}`);
         const pageMidpoint = getMidpoint(
             page.offsetLeft,
             page.offsetTop,
             page.offsetLeft + page.scrollWidth,
-            page.offsetTop + page.scrollHeight
+            page.offsetTop + page.scrollHeight,
         );
 
         const distance = getDistance(pageMidpoint[0], pageMidpoint[1], x, y);
@@ -816,7 +664,7 @@ export function getProp(object, propPath, defaultValue) {
     let value = object;
     const path = propPath.split('.');
 
-    for (let i = 0; i < path.length; i++) {
+    for (let i = 0; i < path.length; i += 1) {
         // Checks against null or undefined
         if (value == null) {
             return defaultValue;
@@ -885,4 +733,21 @@ export function isLocalStorageAvailable() {
     } catch (e) {
         return false;
     }
+}
+
+/**
+ * Handles a blob response from axios.
+ * Generates a deleted reps error on a 202 response, which has no body and is unusable.
+ *
+ * @param {Object} response - A response from axios
+ * @return {Promise} - Resolves with the representation data, rejects with a deleted rep error
+ */
+export function handleRepresentationBlobFetch(response) {
+    const status = getProp(response, 'status');
+    if (status === 202) {
+        const error = new PreviewError(ERROR_CODE.DELETED_REPS, __('error_refresh'), { isRepDeleted: true });
+        return Promise.reject(error);
+    }
+
+    return Promise.resolve(response);
 }

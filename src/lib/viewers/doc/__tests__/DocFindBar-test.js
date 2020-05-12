@@ -1,7 +1,8 @@
 /* eslint-disable no-unused-expressions */
-import DocFindBar from '../DocFindBar';
-import { CLASS_HIDDEN } from '../../../constants';
 import * as util from '../../../util';
+import DocFindBar from '../DocFindBar';
+import { CLASS_BOX_PREVIEW_FIND_BAR, CLASS_HIDDEN } from '../../../constants';
+import { VIEWER_EVENT, USER_DOCUMENT_FIND_EVENTS } from '../../../events';
 
 const CLASS_FIND_MATCH_NOT_FOUND = 'bp-find-match-not-found';
 
@@ -13,10 +14,9 @@ const FIND_MATCH_PENDING = 3;
 const MATCH_OFFSET = 13;
 
 const sandbox = sinon.sandbox.create();
+let containerEl;
 let docFindBar;
-let docEl;
-let findBarEl;
-let pdfViewer;
+let eventBus;
 let findController;
 let stubs = {};
 
@@ -28,20 +28,13 @@ describe('lib/viewers/doc/DocFindBar', () => {
     beforeEach(() => {
         fixture.load('viewers/doc/__tests__/DocFindBar-test.html');
 
-        docEl = document.querySelector('.test-container');
-        findBarEl = document.querySelector('.test-find-bar');
-
-        pdfViewer = new PDFJS.PDFViewer({
-            container: docEl,
-            linkService: new PDFJS.PDFLinkService(),
-            enhanceTextSelection: false // improves text selection if true
-        });
-
-        findController = new PDFJS.PDFFindController({
-            pdfViewer
-        });
-
-        docFindBar = new DocFindBar(findBarEl, findController, true);
+        containerEl = document.querySelector('.test-container');
+        eventBus = { off: sandbox.stub(), on: sandbox.stub() };
+        findController = {
+            executeCommand: sandbox.stub(),
+            linkService: {},
+        };
+        docFindBar = new DocFindBar(containerEl, findController, eventBus);
     });
 
     afterEach(() => {
@@ -49,7 +42,6 @@ describe('lib/viewers/doc/DocFindBar', () => {
             docFindBar.destroy();
         }
 
-        pdfViewer = null;
         docFindBar = null;
         findController = null;
 
@@ -60,18 +52,37 @@ describe('lib/viewers/doc/DocFindBar', () => {
 
     describe('constructor()', () => {
         it('should correctly set the object parameters', () => {
-            expect(docFindBar.opened).to.be.false;
-            expect(docFindBar.bar).to.equal(findBarEl);
+            expect(containerEl.querySelector(`.${CLASS_BOX_PREVIEW_FIND_BAR}`)).to.exist;
+            expect(docFindBar.eventBus).to.equal(eventBus);
             expect(docFindBar.findController).to.equal(findController);
-            expect(docFindBar.currentMatch).to.equal(0);
-            expect(docFindBar.canDownload).to.be.true;
+            expect(docFindBar.opened).to.be.false;
+        });
+
+        it('should throw an error if there is no container element', () => {
+            docFindBar.destroy();
+            containerEl = null;
+            try {
+                docFindBar = new DocFindBar(containerEl, findController, eventBus);
+            } catch (e) {
+                expect(e.message).to.equal('DocFindBar cannot be used without a container element.');
+            }
+        });
+
+        it('should throw an error if there is no eventBus', () => {
+            docFindBar.destroy();
+            eventBus = null;
+            try {
+                docFindBar = new DocFindBar(containerEl, findController, eventBus);
+            } catch (e) {
+                expect(e.message).to.equal('DocFindBar cannot be used without an EventBus instance.');
+            }
         });
 
         it('should throw an error if there is no findController', () => {
             docFindBar.destroy();
             findController = null;
             try {
-                docFindBar = new DocFindBar(findBarEl, findController);
+                docFindBar = new DocFindBar(containerEl, findController, eventBus);
             } catch (e) {
                 expect(e.message).to.equal('DocFindBar cannot be used without a PDFFindController instance.');
             }
@@ -84,7 +95,7 @@ describe('lib/viewers/doc/DocFindBar', () => {
 
             const searchIconEl = document.querySelector('.bp-doc-find-search');
 
-            expect(searchIconEl.parentNode).to.equal(docFindBar.bar);
+            expect(searchIconEl.parentNode).to.equal(docFindBar.findBarEl);
             expect(searchIconEl.className).to.equal('bp-doc-find-search');
         });
 
@@ -93,7 +104,7 @@ describe('lib/viewers/doc/DocFindBar', () => {
 
             const inputFieldEl = document.querySelector('.bp-doc-find-field');
 
-            expect(inputFieldEl.parentNode).to.equal(docFindBar.bar);
+            expect(inputFieldEl.parentNode).to.equal(docFindBar.findBarEl);
             expect(inputFieldEl.className).to.equal('bp-doc-find-field');
         });
 
@@ -102,7 +113,7 @@ describe('lib/viewers/doc/DocFindBar', () => {
 
             const resultsCountEl = document.querySelector('.bp-doc-find-results-count');
 
-            expect(resultsCountEl.parentNode).to.equal(docFindBar.bar);
+            expect(resultsCountEl.parentNode).to.equal(docFindBar.findBarEl);
             expect(resultsCountEl.classList.contains('bp-doc-find-results-count')).to.be.true;
             expect(resultsCountEl.classList.contains(CLASS_HIDDEN)).to.be.true;
         });
@@ -113,20 +124,19 @@ describe('lib/viewers/doc/DocFindBar', () => {
             docFindBar.createFindButtons();
 
             expect(docFindBar.findButtonContainerEl.classList.contains('bp-doc-find-controls')).to.be.true;
-            expect(docFindBar.findButtonContainerEl.parentNode).to.equal(docFindBar.bar);
+            expect(docFindBar.findButtonContainerEl.parentNode).to.equal(docFindBar.findBarEl);
         });
     });
 
     describe('destroy()', () => {
         beforeEach(() => {
             stubs.unbindDOMListeners = sandbox.stub(docFindBar, 'unbindDOMListeners');
-            stubs.removeChild = sandbox.stub(docFindBar.bar.parentNode, 'removeChild');
+            stubs.removeChild = sandbox.stub(docFindBar.findBarEl.parentNode, 'removeChild');
         });
 
-        it('should reset the current match, and unbind DOM listeners', () => {
+        it('should unbind DOM listeners', () => {
             docFindBar.destroy();
 
-            expect(docFindBar.currentMatch).to.equal(0);
             expect(stubs.unbindDOMListeners).to.be.called;
         });
 
@@ -137,7 +147,7 @@ describe('lib/viewers/doc/DocFindBar', () => {
         });
 
         it('should not remove the find bar if it does not exist', () => {
-            docFindBar.bar = undefined;
+            docFindBar.findBarEl = undefined;
 
             docFindBar.destroy();
             expect(stubs.removeChild).to.not.be.called;
@@ -145,21 +155,17 @@ describe('lib/viewers/doc/DocFindBar', () => {
     });
 
     describe('dispatchFindEvent()', () => {
-        beforeEach(() => {
-            stubs.executeCommand = sandbox.stub(docFindBar.findController, 'executeCommand');
-        });
-
         it('should execute the find controller command with the given params', () => {
             docFindBar.findFieldEl.value = 'value';
             const params = {
                 query: docFindBar.findFieldEl.value,
                 phraseSearch: true,
                 highlightAll: true,
-                findPrevious: 'test'
+                findPrevious: 'test',
             };
 
             docFindBar.dispatchFindEvent('string', 'test');
-            expect(stubs.executeCommand).to.be.calledWith('string', params);
+            expect(findController.executeCommand).to.be.calledWith('string', params);
         });
     });
 
@@ -169,7 +175,7 @@ describe('lib/viewers/doc/DocFindBar', () => {
         });
 
         it('should update the status and add the correct class if the match is not found', () => {
-            docFindBar.updateUIState(FIND_MATCH_NOT_FOUND);
+            docFindBar.updateUIState({ state: FIND_MATCH_NOT_FOUND });
 
             expect(docFindBar.status).to.equal('');
             expect(docFindBar.findFieldEl.classList.contains(CLASS_FIND_MATCH_NOT_FOUND)).to.be.true;
@@ -178,7 +184,7 @@ describe('lib/viewers/doc/DocFindBar', () => {
         });
 
         it('should update the status if the status is pending', () => {
-            docFindBar.updateUIState(FIND_MATCH_PENDING);
+            docFindBar.updateUIState({ state: FIND_MATCH_PENDING });
 
             expect(docFindBar.status).to.equal('pending');
             expect(docFindBar.findFieldEl.getAttribute('data-status')).to.equal('pending');
@@ -186,7 +192,7 @@ describe('lib/viewers/doc/DocFindBar', () => {
         });
 
         it('should update the status and add the correct class if the status is found', () => {
-            docFindBar.updateUIState(FIND_MATCH_FOUND);
+            docFindBar.updateUIState({ state: FIND_MATCH_FOUND });
 
             expect(docFindBar.status).to.equal('');
             expect(docFindBar.findFieldEl.classList.contains(CLASS_FIND_MATCH_NOT_FOUND)).to.be.false;
@@ -198,42 +204,40 @@ describe('lib/viewers/doc/DocFindBar', () => {
     describe('updateUIResultsCount()', () => {
         beforeEach(() => {
             stubs.getBoundingClientRect = sandbox.stub(docFindBar.findResultsCountEl, 'getBoundingClientRect').returns({
-                width: 5
+                width: 5,
             });
         });
 
         it('should do nothing if there is no find results count element', () => {
             docFindBar.findResultsCountEl = undefined;
 
-            docFindBar.updateUIResultsCount();
+            docFindBar.updateUIResultsCount({ matchesCount: { current: 1, total: 2 } });
             expect(stubs.getBoundingClientRect).to.not.be.called;
         });
 
         it('should hide the counter if there are no matches', () => {
-            docFindBar.findController.matchCount = undefined;
+            docFindBar.updateUIResultsCount({ matchesCount: { current: 0, total: 0 } });
 
-            docFindBar.updateUIResultsCount();
             expect(docFindBar.findResultsCountEl.classList.contains(CLASS_HIDDEN)).to.be.true;
             expect(stubs.getBoundingClientRect).to.not.be.called;
         });
 
         it('should adjust padding, and create/show the counter', () => {
-            docFindBar.findController.matchCount = 1;
-            let paddingRight = 5 + MATCH_OFFSET;
-            paddingRight = `${paddingRight}px`;
+            const paddingRight = `${5 + MATCH_OFFSET}px`;
 
-            docFindBar.updateUIResultsCount();
+            docFindBar.updateUIResultsCount({ matchesCount: { current: 1, total: 2 } });
+
             expect(docFindBar.findFieldEl.style.paddingRight).to.be.equal(paddingRight);
-            expect(stubs.getBoundingClientRect).to.be.called;
             expect(docFindBar.findResultsCountEl.classList.contains(CLASS_HIDDEN)).to.be.false;
+            expect(stubs.getBoundingClientRect).to.be.called;
         });
     });
 
     describe('setFindFieldElValue()', () => {
         it('should set the findFieldEl value', () => {
             docFindBar.findFieldEl = {
-                removeEventListener: sandbox.stub()
-            }
+                removeEventListener: sandbox.stub(),
+            };
 
             docFindBar.setFindFieldElValue('test');
 
@@ -243,14 +247,14 @@ describe('lib/viewers/doc/DocFindBar', () => {
 
     describe('bindDOMListeners()', () => {
         it('should add the correct event listeners', () => {
-            const barStub = sandbox.stub(docFindBar.bar, 'addEventListener');
+            const barStub = sandbox.stub(docFindBar.findBarEl, 'addEventListener');
             const findFieldStub = sandbox.stub(docFindBar.findFieldEl, 'addEventListener');
             const findPrevStub = sandbox.stub(docFindBar.findPreviousButtonEl, 'addEventListener');
             const findNextStub = sandbox.stub(docFindBar.findNextButtonEl, 'addEventListener');
             const findCloseStub = sandbox.stub(docFindBar.findCloseButtonEl, 'addEventListener');
 
             docFindBar.bindDOMListeners();
-            expect(barStub).to.be.calledWith('keydown', docFindBar.barKeyDownHandler);
+            expect(barStub).to.be.calledWith('keydown', docFindBar.findBarKeyDownHandler);
             expect(findFieldStub).to.be.calledWith('input', docFindBar.findFieldHandler);
             expect(findPrevStub).to.be.calledWith('click', docFindBar.findPreviousHandler);
             expect(findNextStub).to.be.calledWith('click', docFindBar.findNextHandler);
@@ -260,14 +264,14 @@ describe('lib/viewers/doc/DocFindBar', () => {
 
     describe('unbindDOMListeners()', () => {
         it('should remove the correct event listeners', () => {
-            const barStub = sandbox.stub(docFindBar.bar, 'removeEventListener');
+            const barStub = sandbox.stub(docFindBar.findBarEl, 'removeEventListener');
             const findFieldStub = sandbox.stub(docFindBar.findFieldEl, 'removeEventListener');
             const findPrevStub = sandbox.stub(docFindBar.findPreviousButtonEl, 'removeEventListener');
             const findNextStub = sandbox.stub(docFindBar.findNextButtonEl, 'removeEventListener');
             const findCloseStub = sandbox.stub(docFindBar.findCloseButtonEl, 'removeEventListener');
 
             docFindBar.unbindDOMListeners();
-            expect(barStub).to.be.calledWith('keydown', docFindBar.barKeyDownHandler);
+            expect(barStub).to.be.calledWith('keydown', docFindBar.findBarKeyDownHandler);
             expect(findFieldStub).to.be.calledWith('input', docFindBar.findFieldHandler);
             expect(findPrevStub).to.be.calledWith('click', docFindBar.findPreviousHandler);
             expect(findNextStub).to.be.calledWith('click', docFindBar.findNextHandler);
@@ -281,18 +285,9 @@ describe('lib/viewers/doc/DocFindBar', () => {
             stubs.open = sandbox.stub(docFindBar, 'open');
             stubs.event = {
                 preventDefault: sandbox.stub(),
-                stopPropagation: sandbox.stub()
+                stopPropagation: sandbox.stub(),
             };
             stubs.close = sandbox.stub(docFindBar, 'close');
-        });
-
-        it('should prevent default but not open the find bar if downloads are disabled', () => {
-            docFindBar.canDownload = false;
-            stubs.decodeKeydown.returns('meta+f');
-
-            docFindBar.onKeydown(stubs.event);
-            expect(stubs.open).to.not.be.called;
-            expect(stubs.event.preventDefault).to.be.called;
         });
 
         it('should open and prevent default if meta+f is entered', () => {
@@ -347,21 +342,20 @@ describe('lib/viewers/doc/DocFindBar', () => {
     });
 
     describe('findFieldHandler()', () => {
-        it('should dispatch the find event, and set current match to 1', () => {
+        it('should dispatch the find event', () => {
             const dispatchFindEventStub = sandbox.stub(docFindBar, 'dispatchFindEvent');
 
             docFindBar.findFieldHandler();
             expect(dispatchFindEventStub).to.be.calledWith('find');
-            expect(docFindBar.currentMatch).to.equal(1);
         });
     });
 
-    describe('barKeyDownHandler()', () => {
+    describe('findBarKeyDownHandler()', () => {
         beforeEach(() => {
             stubs.decodeKeydown = sandbox.stub(util, 'decodeKeydown');
             stubs.event = {
                 preventDefault: sandbox.stub(),
-                stopPropagation: sandbox.stub()
+                stopPropagation: sandbox.stub(),
             };
             stubs.findNextHandler = sandbox.stub(docFindBar, 'findNextHandler');
             stubs.findPreviousHandler = sandbox.stub(docFindBar, 'findPreviousHandler');
@@ -371,14 +365,14 @@ describe('lib/viewers/doc/DocFindBar', () => {
         it('should find the next match if Enter is entered', () => {
             stubs.decodeKeydown.returns('Enter');
 
-            docFindBar.barKeyDownHandler(stubs.event);
+            docFindBar.findBarKeyDownHandler(stubs.event);
             expect(stubs.findNextHandler).to.be.called;
         });
 
         it('should find the previous match if Shift+Enter is entered', () => {
             stubs.decodeKeydown.returns('Shift+Enter');
 
-            docFindBar.barKeyDownHandler(stubs.event);
+            docFindBar.findBarKeyDownHandler(stubs.event);
             expect(stubs.findNextHandler).to.not.be.called;
             expect(stubs.findPreviousHandler).to.be.called;
         });
@@ -387,7 +381,7 @@ describe('lib/viewers/doc/DocFindBar', () => {
             stubs.decodeKeydown.returns('Escape');
             docFindBar.opened = false;
 
-            docFindBar.barKeyDownHandler(stubs.event);
+            docFindBar.findBarKeyDownHandler(stubs.event);
             expect(stubs.close).to.not.be.called;
             expect(stubs.event.stopPropagation).to.not.be.called;
             expect(stubs.event.preventDefault).to.not.be.called;
@@ -397,7 +391,7 @@ describe('lib/viewers/doc/DocFindBar', () => {
             stubs.decodeKeydown.returns('Escape');
             docFindBar.opened = true;
 
-            docFindBar.barKeyDownHandler(stubs.event);
+            docFindBar.findBarKeyDownHandler(stubs.event);
             expect(stubs.close).to.be.called;
             expect(stubs.event.stopPropagation).to.be.called;
             expect(stubs.event.preventDefault).to.be.called;
@@ -407,7 +401,7 @@ describe('lib/viewers/doc/DocFindBar', () => {
             stubs.decodeKeydown.returns('Esc');
             docFindBar.opened = true;
 
-            docFindBar.barKeyDownHandler(stubs.event);
+            docFindBar.findBarKeyDownHandler(stubs.event);
             expect(stubs.close).to.be.called;
             expect(stubs.event.stopPropagation).to.be.called;
             expect(stubs.event.preventDefault).to.be.called;
@@ -416,28 +410,28 @@ describe('lib/viewers/doc/DocFindBar', () => {
         it('should stop propogation if Shift++ is entered', () => {
             stubs.decodeKeydown.returns('Shift++');
 
-            docFindBar.barKeyDownHandler(stubs.event);
+            docFindBar.findBarKeyDownHandler(stubs.event);
             expect(stubs.event.stopPropagation).to.be.called;
         });
 
         it('should stop propogation if Shift+_ is entered', () => {
             stubs.decodeKeydown.returns('Shift+_');
 
-            docFindBar.barKeyDownHandler(stubs.event);
+            docFindBar.findBarKeyDownHandler(stubs.event);
             expect(stubs.event.stopPropagation).to.be.called;
         });
 
         it('should stop propogation if [ is entered', () => {
             stubs.decodeKeydown.returns('[');
 
-            docFindBar.barKeyDownHandler(stubs.event);
+            docFindBar.findBarKeyDownHandler(stubs.event);
             expect(stubs.event.stopPropagation).to.be.called;
         });
 
         it('should stop propogation if ] is entered', () => {
             stubs.decodeKeydown.returns(']');
 
-            docFindBar.barKeyDownHandler(stubs.event);
+            docFindBar.findBarKeyDownHandler(stubs.event);
             expect(stubs.event.stopPropagation).to.be.called;
         });
     });
@@ -448,7 +442,6 @@ describe('lib/viewers/doc/DocFindBar', () => {
             stubs.dispatchFindEvent = sandbox.stub(docFindBar, 'dispatchFindEvent');
             docFindBar.findFieldEl.value = 'test';
             docFindBar.findController.matchCount = 1;
-            docFindBar.currentMatch = 0;
         });
 
         it('should do nothing if there is nothing to find', () => {
@@ -471,13 +464,15 @@ describe('lib/viewers/doc/DocFindBar', () => {
             expect(stubs.dispatchFindEvent).to.be.called;
         });
 
-        it('should go back to the first match if the next button is clicked when on the last match', () => {
-            docFindBar.findFieldEl.value = 'test';
-            docFindBar.findController.matchCount = 1;
-            docFindBar.currentMatch = 2;
+        it('should emit the find next event', () => {
+            sandbox.stub(docFindBar, 'emit');
 
+            docFindBar.findFieldEl.value = 'test';
             docFindBar.findNextHandler(true);
-            expect(docFindBar.currentMatch).to.equal(1);
+
+            expect(docFindBar.emit).to.be.calledWith(VIEWER_EVENT.metric, {
+                name: USER_DOCUMENT_FIND_EVENTS.NEXT,
+            });
         });
     });
 
@@ -487,13 +482,12 @@ describe('lib/viewers/doc/DocFindBar', () => {
             stubs.dispatchFindEvent = sandbox.stub(docFindBar, 'dispatchFindEvent');
             docFindBar.findFieldEl.value = 'test';
             docFindBar.findController.matchCount = 5;
-            docFindBar.currentMatch = 0;
         });
 
         it('should do nothing if there is nothing to find', () => {
             docFindBar.findFieldEl.value = '';
-
             docFindBar.findPreviousHandler(false);
+
             expect(stubs.focus).to.not.be.called;
             expect(stubs.dispatchFindEvent).to.not.be.called;
         });
@@ -510,18 +504,20 @@ describe('lib/viewers/doc/DocFindBar', () => {
             expect(stubs.dispatchFindEvent).to.be.called;
         });
 
-        it('should go back to the first match if the previous button is clicked when on the last match', () => {
+        it('should emit a find previous metric', () => {
+            sandbox.stub(docFindBar, 'emit');
             docFindBar.findFieldEl.value = 'test';
-            docFindBar.currentMatch = 0;
 
             docFindBar.findPreviousHandler(true);
-            expect(docFindBar.currentMatch).to.equal(5);
+            expect(docFindBar.emit).to.be.calledWith(VIEWER_EVENT.metric, {
+                name: USER_DOCUMENT_FIND_EVENTS.PREVIOUS,
+            });
         });
     });
     describe('open()', () => {
         beforeEach(() => {
             stubs.findFieldHandler = sandbox.stub(docFindBar, 'findFieldHandler');
-            stubs.remove = sandbox.stub(docFindBar.bar.classList, 'remove');
+            stubs.remove = sandbox.stub(docFindBar.findBarEl.classList, 'remove');
             stubs.select = sandbox.stub(docFindBar.findFieldEl, 'select');
             stubs.focus = sandbox.stub(docFindBar.findFieldEl, 'focus');
         });
@@ -542,11 +538,15 @@ describe('lib/viewers/doc/DocFindBar', () => {
         });
 
         it('should open the find bar if it is not open', () => {
+            sandbox.stub(docFindBar, 'emit');
             docFindBar.opened = false;
 
             docFindBar.open();
             expect(docFindBar.opened).to.equal(true);
             expect(stubs.remove).to.be.called;
+            expect(docFindBar.emit).to.be.calledWith(VIEWER_EVENT.metric, {
+                name: USER_DOCUMENT_FIND_EVENTS.OPEN,
+            });
         });
 
         it('should not open the find bar if it is already open', () => {
@@ -569,7 +569,7 @@ describe('lib/viewers/doc/DocFindBar', () => {
     describe('close()', () => {
         beforeEach(() => {
             stubs.findFieldHandler = sandbox.stub(docFindBar, 'findFieldHandler');
-            stubs.add = sandbox.stub(docFindBar.bar.classList, 'add');
+            stubs.add = sandbox.stub(docFindBar.findBarEl.classList, 'add');
         });
 
         it('should save and clear the current search', () => {
@@ -583,13 +583,40 @@ describe('lib/viewers/doc/DocFindBar', () => {
         });
 
         it('should hide the bar if it is open', () => {
+            sandbox.stub(docFindBar, 'emit');
+
             docFindBar.findFieldEl.value = 'test';
             docFindBar.opened = true;
 
             docFindBar.close();
+            expect(docFindBar.emit).to.be.calledWith('close');
             expect(docFindBar.opened).to.equal(false);
             expect(stubs.add).to.be.calledWith(CLASS_HIDDEN);
-            expect(docFindBar.findController.active).to.equal(false);
+        });
+    });
+
+    describe('toggle()', () => {
+        beforeEach(() => {
+            stubs.open = sandbox.stub(docFindBar, 'open');
+            stubs.close = sandbox.stub(docFindBar, 'close');
+        });
+
+        it('should open if not currently opened', () => {
+            docFindBar.opened = false;
+
+            docFindBar.toggle();
+
+            expect(docFindBar.open).to.be.called;
+            expect(docFindBar.close).not.to.be.called;
+        });
+
+        it('should close if currently opened', () => {
+            docFindBar.opened = true;
+
+            docFindBar.toggle();
+
+            expect(docFindBar.open).not.to.be.called;
+            expect(docFindBar.close).to.be.called;
         });
     });
 });

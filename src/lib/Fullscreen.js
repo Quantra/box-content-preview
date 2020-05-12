@@ -1,9 +1,11 @@
 import EventEmitter from 'events';
 import fscreen from 'fscreen';
-
-import { CLASS_FULLSCREEN } from './constants';
+import { CLASS_FULLSCREEN, CLASS_FULLSCREEN_UNSUPPORTED } from './constants';
 
 class Fullscreen extends EventEmitter {
+    /** {HTMLElement} - The element used as the root for fullscreen mode */
+    fullscreenElement;
+
     /**
      * [constructor]
      *
@@ -18,31 +20,28 @@ class Fullscreen extends EventEmitter {
     /**
      * Binds DOM listeners for Fullscreen.
      *
-     * @protected
      * @return {void}
      */
     bindDOMListeners() {
-        // as of now (1/12/18) fullscreenchange is not universally adopted, fscreen will
-        // detect and add the appropriate vendor prefixed event
+        // The fullscreenchange event is not universally supported, but fscreen will
+        // detect and add the appropriate vendor-prefixed event
         fscreen.addEventListener('fullscreenchange', this.fullscreenchangeHandler);
     }
 
     /**
      * Unbinds DOM listeners for Fullscreen.
      *
-     * @protected
      * @return {void}
      */
     unbindDOMListeners() {
-        // as of now (1/12/18) fullscreenchange is not universally adopted, fscreen will
-        // detect and add the appropriate vendor prefixed event
+        // The fullscreenchange event is not universally supported, but fscreen will
+        // detect and add the appropriate vendor-prefixed event
         fscreen.removeEventListener('fullscreenchange', this.fullscreenchangeHandler);
     }
 
     /**
      * [destructor]
      *
-     * @protected
      * @return {void}
      */
     destroy() {
@@ -53,97 +52,110 @@ class Fullscreen extends EventEmitter {
     /**
      * Returns true if the browser supports fullscreen natively
      *
-     * @private
      * @return {boolean} Fullscreen supported or not
      */
     isSupported() {
-        return (
-            document.fullscreenEnabled ||
-            document.webkitFullscreenEnabled ||
-            document.mozFullScreenEnabled ||
-            document.msFullscreenEnabled
-        );
+        return fscreen.fullscreenEnabled;
     }
 
     /**
      * Return true if full screen is active
      *
-     * @public
-     * @param {HTMLElement} [element] - fullscreen element
+     * @param {HTMLElement} [el] - fullscreen element
      * @return {boolean} In fullscreen or not
      */
-    isFullscreen(element) {
-        let fullscreen;
+    isFullscreen(el) {
         if (this.isSupported()) {
-            fullscreen = !!(
-                document.fullscreenElement ||
-                document.mozFullScreenElement ||
-                document.webkitFullscreenElement ||
-                document.msFullscreenElement
-            );
-        } else {
-            fullscreen = element instanceof HTMLElement && element.classList.contains(CLASS_FULLSCREEN);
+            return !!fscreen.fullscreenElement;
         }
-        return fullscreen;
+
+        return el && el.classList.contains(CLASS_FULLSCREEN);
     }
 
     /**
-     * Fires events when the fullscreen state changes
+     * Handles fullscreen change events from fscreen
      *
-     * @private
-     * @param {HTMLElement|Event} [el] - Fullscreen element
      * @return {void}
      */
-    fullscreenchangeHandler = (el) => {
-        let enter = false;
+    fullscreenchangeHandler = () => {
+        const { fullscreenElement } = fscreen;
 
-        if (this.isSupported()) {
-            if (this.isFullscreen()) {
-                enter = true;
-            }
-        } else if (!this.isFullscreen(el)) {
-            enter = true;
-        }
-
-        if (enter) {
-            this.emit('enter');
+        if (fullscreenElement) {
+            this.fullscreenEnterHandler(fullscreenElement);
         } else {
-            this.emit('exit');
+            this.fullscreenExitHandler();
         }
     };
 
     /**
-     * Toggles fullscreen mode
+     * Handles fullscreen enter events
      *
-     * @public
      * @param {HTMLElement} el - fullscreen element
      * @return {void}
      */
-    toggle(el) {
-        const element = el || document.documentElement;
+    fullscreenEnterHandler(el) {
+        this.fullscreenElement = el;
+        this.fullscreenElement.classList.add(CLASS_FULLSCREEN);
+        this.fullscreenElement.focus();
 
+        if (!this.isSupported()) {
+            this.fullscreenElement.classList.add(CLASS_FULLSCREEN_UNSUPPORTED);
+        }
+
+        this.emit('enter');
+    }
+
+    /**
+     * Handles fullscreen exit events
+     *
+     * @return {void}
+     */
+    fullscreenExitHandler() {
+        this.fullscreenElement.classList.remove(CLASS_FULLSCREEN);
+        this.fullscreenElement.classList.remove(CLASS_FULLSCREEN_UNSUPPORTED);
+        this.fullscreenElement = null;
+
+        this.emit('exit');
+    }
+
+    /**
+     * Enter fullscreen mode
+     *
+     * @param {HTMLElement} el - fullscreen element
+     * @return {void}
+     */
+    enter(el = document.documentElement) {
         if (this.isSupported()) {
-            if (this.isFullscreen()) {
-                if (document.exitFullscreen) {
-                    document.exitFullscreen();
-                } else if (document.msExitFullscreen) {
-                    document.msExitFullscreen();
-                } else if (document.mozCancelFullScreen) {
-                    document.mozCancelFullScreen();
-                } else if (document.webkitExitFullscreen) {
-                    document.webkitExitFullscreen();
-                }
-            } else if (element.requestFullscreen) {
-                element.requestFullscreen(Element.ALLOW_KEYBOARD_INPUT);
-            } else if (element.msRequestFullscreen) {
-                element.msRequestFullscreen(Element.ALLOW_KEYBOARD_INPUT);
-            } else if (element.mozRequestFullScreen) {
-                element.mozRequestFullScreen(Element.ALLOW_KEYBOARD_INPUT);
-            } else if (element.webkitRequestFullscreen) {
-                element.webkitRequestFullscreen(Element.ALLOW_KEYBOARD_INPUT);
-            }
+            fscreen.requestFullscreenFunction(el).call(el, Element.ALLOW_KEYBOARD_INPUT);
         } else {
-            this.fullscreenchangeHandler(element);
+            this.fullscreenEnterHandler(el);
+        }
+    }
+
+    /**
+     * Exit fullscreen mode
+     *
+     * @return {void}
+     */
+    exit() {
+        if (this.isSupported()) {
+            fscreen.exitFullscreen();
+        } else {
+            this.fullscreenExitHandler();
+        }
+    }
+
+    /**
+     * Toggle fullscreen mode
+     *
+     * @param {HTMLElement} el - fullscreen element
+     * @return {void}
+     */
+    toggle(el = document.documentElement) {
+        if (this.isFullscreen(el)) {
+            this.exit();
+        } else {
+            this.enter(el);
         }
     }
 }

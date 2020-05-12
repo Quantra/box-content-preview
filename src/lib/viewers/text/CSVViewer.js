@@ -1,21 +1,35 @@
 import TextBaseViewer from './TextBaseViewer';
-import { createAssetUrlCreator, get } from '../../util';
+import { createAssetUrlCreator } from '../../util';
 import { TEXT_STATIC_ASSETS_VERSION } from '../../constants';
 import './CSV.scss';
 import { ERROR_CODE, VIEWER_EVENT } from '../../events';
 import PreviewError from '../../PreviewError';
 
 const JS = [`third-party/text/${TEXT_STATIC_ASSETS_VERSION}/papaparse.min.js`, 'csv.js'];
+const PAPAPARSE_ERROR_TYPES = {
+    DELIMITER: 'Delimiter',
+    FIELD_MISMATCH: 'FieldMismatch',
+    QUOTES: 'Quotes',
+};
+const ERROR_PRIORITY = {
+    [PAPAPARSE_ERROR_TYPES.DELIMITER]: 0,
+    [PAPAPARSE_ERROR_TYPES.QUOTES]: 1,
+    [PAPAPARSE_ERROR_TYPES.FIELD_MISMATCH]: 2,
+};
 
 class CSVViewer extends TextBaseViewer {
     /**
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() first to set up common layout
         super.setup();
 
-        this.csvEl = this.containerEl.appendChild(document.createElement('div'));
+        this.csvEl = this.createViewer(document.createElement('div'));
         this.csvEl.className = 'bp-text bp-text-csv';
     }
 
@@ -37,7 +51,6 @@ class CSVViewer extends TextBaseViewer {
      * @return {void}
      */
     load() {
-        this.setup();
         super.load();
 
         const { representation, location } = this.options;
@@ -47,7 +60,7 @@ class CSVViewer extends TextBaseViewer {
 
         return Promise.all([this.loadAssets(JS), this.getRepStatus().getPromise()])
             .then(() => {
-                get(papaWorkerUrl, 'blob').then((papaWorkerBlob) => {
+                this.api.get(papaWorkerUrl, { type: 'blob' }).then(papaWorkerBlob => {
                     /* global Papa */
                     const workerSrc = URL.createObjectURL(papaWorkerBlob);
                     Papa.SCRIPT_PATH = workerSrc;
@@ -60,18 +73,51 @@ class CSVViewer extends TextBaseViewer {
                             const error = new PreviewError(ERROR_CODE.LOAD_CSV, __('error_refresh'), { reason });
                             this.handleDownloadError(error, urlWithAuth);
                         },
-                        complete: (results) => {
+                        complete: results => {
                             if (this.isDestroyed() || !results) {
                                 return;
                             }
+
+                            this.checkForParseErrors(results);
+
                             this.data = results.data;
                             this.finishLoading();
                             URL.revokeObjectURL(workerSrc);
-                        }
+                        },
                     });
                 });
             })
             .catch(this.handleAssetError);
+    }
+
+    /**
+     * Checks for parse errors and if present triggers an error silently
+     * @param {Array} results.errors Papaparse results errors array
+     * @return {void}
+     */
+    checkForParseErrors({ errors = [] } = {}) {
+        if (!errors.length) {
+            return;
+        }
+
+        const parseError = this.getWorstParseError(errors);
+
+        const error = new PreviewError(ERROR_CODE.PARSE_CSV, undefined, {
+            ...parseError,
+            silent: true,
+        });
+
+        this.triggerError(error);
+    }
+
+    /**
+     * Utility to sort the PapaParse errors by most significant and returning the first.
+     * The significance is defined as DELIMTER > QUOTES > FIELD_MISMATCH
+     * @param {Array} errors Array of errors from PapaParse parse results
+     * @return {Object} returns PapaParse error or undefined
+     */
+    getWorstParseError(errors = []) {
+        return errors.sort((a, b) => ERROR_PRIORITY[a.type] - ERROR_PRIORITY[b.type])[0];
     }
 
     /**
@@ -89,7 +135,7 @@ class CSVViewer extends TextBaseViewer {
         const { representation } = this.options;
         if (content && this.isRepresentationReady(representation)) {
             const template = representation.content.url_template;
-            get(this.createContentUrlWithAuthParams(template), 'any');
+            this.api.get(this.createContentUrlWithAuthParams(template), { type: 'document' });
         }
     }
 

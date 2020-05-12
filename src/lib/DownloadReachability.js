@@ -4,8 +4,7 @@ const DEFAULT_DOWNLOAD_HOST_PREFIX = 'https://dl.';
 const PROD_CUSTOM_HOST_SUFFIX = 'boxcloud.com';
 const DOWNLOAD_NOTIFICATION_SHOWN_KEY = 'download_host_notification_shown';
 const DOWNLOAD_HOST_FALLBACK_KEY = 'download_host_fallback';
-const NUMBERED_HOST_PREFIX_REGEX = /^https:\/\/dl\d+\./;
-const CUSTOM_HOST_PREFIX_REGEX = /^https:\/\/[A-Za-z0-9]+./;
+const CUSTOM_HOST_PREFIX_REGEX = /^https:\/\/.+?\./;
 
 let IS_STORAGE_AVAILABLE;
 
@@ -49,12 +48,11 @@ class DownloadReachability {
      * @return {boolean} - HTTP response
      */
     static isCustomDownloadHost(downloadUrl) {
-        // A custom download host either
-        // 1. begins with a numbered dl hostname
-        // 2. or starts with a custom prefix and ends with boxcloud.com
+        // A custom download host:
+        // 1. does not begin with the default "dl." and
+        // 2. ends with boxcloud.com
         return (
-            !downloadUrl.startsWith(DEFAULT_DOWNLOAD_HOST_PREFIX) &&
-            (!!downloadUrl.match(NUMBERED_HOST_PREFIX_REGEX) || downloadUrl.indexOf(PROD_CUSTOM_HOST_SUFFIX) !== -1)
+            !downloadUrl.startsWith(DEFAULT_DOWNLOAD_HOST_PREFIX) && downloadUrl.indexOf(PROD_CUSTOM_HOST_SUFFIX) !== -1
         );
     }
 
@@ -66,12 +64,6 @@ class DownloadReachability {
      * @return {string} - The updated download URL
      */
     static replaceDownloadHostWithDefault(downloadUrl) {
-        if (downloadUrl.match(NUMBERED_HOST_PREFIX_REGEX)) {
-            // First check to see if we can swap a numbered dl prefix for the default
-            return downloadUrl.replace(NUMBERED_HOST_PREFIX_REGEX, DEFAULT_DOWNLOAD_HOST_PREFIX);
-        }
-
-        // Otherwise replace the custom prefix with the default
         return downloadUrl.replace(CUSTOM_HOST_PREFIX_REGEX, DEFAULT_DOWNLOAD_HOST_PREFIX);
     }
 
@@ -140,14 +132,25 @@ class DownloadReachability {
             : null;
     }
 
+    /** @property {Api} Previews instance of the api for XHR calls */
+    api;
+
+    /**
+     * @param {Api} client - Previews instance of the api.
+     */
+    constructor(client) {
+        this.api = client;
+    }
+
     /**
      * Checks if the provided host is reachable. If not set the session storage to reflect this.
      *
      * @param {string} downloadUrl - Content download URL, may either be a template or an actual URL
      * @return {void}
      */
-    static setDownloadReachability(downloadUrl) {
-        return fetch(downloadUrl, { method: 'HEAD' })
+    setDownloadReachability(downloadUrl) {
+        return this.api
+            .head(downloadUrl)
             .then(() => {
                 return Promise.resolve(false);
             })
@@ -163,7 +166,7 @@ class DownloadReachability {
      * @param {string} downloadUrl - Content download URL
      * @return {void}
      */
-    static downloadWithReachabilityCheck(downloadUrl) {
+    downloadWithReachabilityCheck(downloadUrl) {
         const defaultDownloadUrl = DownloadReachability.replaceDownloadHostWithDefault(downloadUrl);
         if (DownloadReachability.isDownloadHostBlocked() || !DownloadReachability.isCustomDownloadHost(downloadUrl)) {
             // If we know the host is blocked, or we are already using the default,
@@ -172,7 +175,7 @@ class DownloadReachability {
         } else {
             // Try the custom host, then check reachability
             openUrlInsideIframe(downloadUrl);
-            DownloadReachability.setDownloadReachability(downloadUrl).then((isBlocked) => {
+            this.setDownloadReachability(downloadUrl).then(isBlocked => {
                 if (isBlocked) {
                     // If download is unreachable, try again with default
                     openUrlInsideIframe(defaultDownloadUrl);

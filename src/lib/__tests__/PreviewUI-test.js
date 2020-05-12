@@ -22,7 +22,7 @@ describe('lib/PreviewUI', () => {
         fixture.load('__tests__/PreviewUI-test.html');
         containerEl = document.querySelector('.ui');
         options = {
-            container: containerEl
+            container: containerEl,
         };
     });
 
@@ -165,17 +165,17 @@ describe('lib/PreviewUI', () => {
             });
 
             it('should add a class if navigation is present', () => {
-                const { contentContainer } = ui;
+                const { previewContainer } = ui;
                 ui.showNavigation('1', ['1']);
-                let isShowingNavigation = contentContainer.classList.contains(
-                    constants.CLASS_BOX_PREVIEW_HAS_NAVIGATION
+                let isShowingNavigation = previewContainer.classList.contains(
+                    constants.CLASS_BOX_PREVIEW_HAS_NAVIGATION,
                 );
                 expect(isShowingNavigation).to.be.false;
                 ui.showNavigation('1', ['1', '2']);
-                isShowingNavigation = contentContainer.classList.contains(constants.CLASS_BOX_PREVIEW_HAS_NAVIGATION);
+                isShowingNavigation = previewContainer.classList.contains(constants.CLASS_BOX_PREVIEW_HAS_NAVIGATION);
                 expect(isShowingNavigation).to.be.true;
                 ui.showNavigation('1', ['1']);
-                isShowingNavigation = contentContainer.classList.contains(constants.CLASS_BOX_PREVIEW_HAS_NAVIGATION);
+                isShowingNavigation = previewContainer.classList.contains(constants.CLASS_BOX_PREVIEW_HAS_NAVIGATION);
                 expect(isShowingNavigation).to.be.false;
             });
         });
@@ -264,7 +264,7 @@ describe('lib/PreviewUI', () => {
     describe('startProgressBar()', () => {
         it('should start the progress bar', () => {
             ui.progressBar = {
-                start: sandbox.stub()
+                start: sandbox.stub(),
             };
 
             ui.startProgressBar();
@@ -275,7 +275,7 @@ describe('lib/PreviewUI', () => {
     describe('finishProgressBar()', () => {
         it('should finish the progress bar', () => {
             ui.progressBar = {
-                finish: sandbox.stub()
+                finish: sandbox.stub(),
             };
 
             ui.finishProgressBar();
@@ -286,7 +286,7 @@ describe('lib/PreviewUI', () => {
     describe('showNotification()', () => {
         it('should show a notification message', () => {
             ui.notification = {
-                show: sandbox.stub()
+                show: sandbox.stub(),
             };
 
             ui.showNotification('message');
@@ -297,7 +297,7 @@ describe('lib/PreviewUI', () => {
     describe('hideNotification()', () => {
         it('should hide the notification message', () => {
             ui.notification = {
-                hide: sandbox.stub()
+                hide: sandbox.stub(),
             };
 
             ui.hideNotification('message');
@@ -318,16 +318,81 @@ describe('lib/PreviewUI', () => {
             ui.replaceHeader('.bp-invalid-header');
 
             const baseHeader = containerEl.querySelector('.bp-base-header');
-            expect(newHeader).to.have.class('bp-is-hidden');
-            expect(baseHeader).to.not.have.class('bp-is-hidden');
+            expect(newHeader).to.have.class(constants.CLASS_HIDDEN);
+            expect(baseHeader).to.not.have.class(constants.CLASS_HIDDEN);
         });
 
         it('should hide all headers and then show the specified header', () => {
             ui.replaceHeader('.bp-draw-header');
 
             const baseHeader = containerEl.querySelector('.bp-base-header');
-            expect(newHeader).to.not.have.class('bp-is-hidden');
-            expect(baseHeader).to.have.class('bp-is-hidden');
+            expect(newHeader).to.not.have.class(constants.CLASS_HIDDEN);
+            expect(baseHeader).to.have.class(constants.CLASS_HIDDEN);
+        });
+    });
+
+    describe('setupHeader()', () => {
+        beforeEach(() => {
+            containerEl = ui.setup(options);
+        });
+
+        afterEach(() => {
+            ui.cleanup();
+        });
+
+        it('should show the header container and default header', () => {
+            const headerContainerEl = containerEl.querySelector(constants.SELECTOR_BOX_PREVIEW_HEADER_CONTAINER);
+            headerContainerEl.classList.add(constants.CLASS_HIDDEN);
+
+            ui.setupHeader();
+
+            const uiHeaderContainerEl = ui.container.querySelector(constants.SELECTOR_BOX_PREVIEW_HEADER_CONTAINER);
+            expect(uiHeaderContainerEl).to.not.have.class(constants.CLASS_HIDDEN);
+            const baseHeaderEl = uiHeaderContainerEl.firstElementChild;
+            expect(baseHeaderEl).to.have.class(constants.CLASS_BOX_PREVIEW_HEADER);
+            expect(baseHeaderEl).to.have.class(constants.CLASS_BOX_PREVIEW_BASE_HEADER);
+        });
+
+        it('should set the header theme to dark', () => {
+            expect(containerEl).to.not.have.class(constants.CLASS_BOX_PREVIEW_THEME_DARK);
+
+            ui.setupHeader('dark');
+
+            expect(containerEl).to.have.class(constants.CLASS_BOX_PREVIEW_THEME_DARK);
+        });
+
+        it('should override the logo url if specified', () => {
+            const url = 'http://test/foo';
+
+            expect(containerEl.querySelector(constants.SELECTOR_BOX_PREVIEW_LOGO_DEFAULT)).to.not.have.class(
+                constants.CLASS_HIDDEN,
+            );
+
+            ui.setupHeader('', url);
+
+            const customLogoEl = containerEl.querySelector(constants.SELECTOR_BOX_PREVIEW_LOGO_CUSTOM);
+            expect(containerEl.querySelector(constants.SELECTOR_BOX_PREVIEW_LOGO_DEFAULT)).to.have.class(
+                constants.CLASS_HIDDEN,
+            );
+            expect(customLogoEl).to.not.have.class(constants.CLASS_HIDDEN);
+            expect(customLogoEl.src).to.equal(url);
+        });
+    });
+
+    describe('isSetup()', () => {
+        it('should return false if container is falsy', () => {
+            ui.container = false;
+            expect(ui.isSetup()).to.be.false;
+        });
+
+        it('should return false if container innerHTML is empty', () => {
+            ui.container = { innerHTML: '' };
+            expect(ui.isSetup()).to.be.false;
+        });
+
+        it('should return true if container innerHTML is not empty', () => {
+            ui.container = { innerHTML: 'foo' };
+            expect(ui.isSetup()).to.be.true;
         });
     });
 });

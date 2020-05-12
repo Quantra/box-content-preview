@@ -1,9 +1,10 @@
 /* eslint-disable no-unused-expressions */
+import Api from '../../../api';
 import DashViewer from '../DashViewer';
 import VideoBaseViewer from '../VideoBaseViewer';
 import BaseViewer from '../../BaseViewer';
 import PreviewError from '../../../PreviewError';
-import * as util from '../../../util';
+import Timer from '../../../Timer';
 import { MEDIA_STATIC_ASSETS_VERSION } from '../../../constants';
 import { VIEWER_EVENT } from '../../../events';
 
@@ -25,38 +26,39 @@ describe('lib/viewers/media/DashViewer', () => {
     beforeEach(() => {
         fixture.load('viewers/media/__tests__/DashViewer-test.html');
         const containerEl = document.querySelector('.container');
-
+        stubs.api = new Api();
         dash = new DashViewer({
+            api: stubs.api,
             cache: {
                 set: () => {},
                 has: () => {},
                 get: () => {},
-                unset: () => {}
+                unset: () => {},
             },
             file: {
                 id: 0,
                 permissions: {
-                    can_download: true
-                }
+                    can_download: true,
+                },
             },
             container: containerEl,
             location: { locale: 'en-US' },
             representation: {
                 content: {
-                    url_template: 'url'
+                    url_template: 'url',
                 },
-                status: {}
-            }
+                status: {},
+            },
         });
 
         // Stubbing out sub-components of the dash player
         stubs.emit = sandbox.stub(dash, 'emit');
         dash.filmstripStatus = {
-            destroy: () => {}
+            destroy: () => {},
         };
 
         stubs.networkEngine = {
-            registerRequestFilter: () => {}
+            registerRequestFilter: () => {},
         };
         dash.player = {
             addEventListener: () => {},
@@ -71,9 +73,14 @@ describe('lib/viewers/media/DashViewer', () => {
             selectTextTrack: () => {},
             selectVariantTrack: () => {},
             selectAudioLanguage: () => {},
-            setTextTrackVisibility: () => {}
+            setTextTrackVisibility: () => {},
+        };
+        dash.autoCaptionDisplayer = {
+            append: () => {},
+            setTextVisibility: () => {},
         };
         stubs.mockPlayer = sandbox.mock(dash.player);
+        stubs.mockDisplayer = sandbox.mock(dash.autoCaptionDisplayer);
 
         dash.mediaControls = {
             addListener: () => {},
@@ -84,7 +91,8 @@ describe('lib/viewers/media/DashViewer', () => {
             initAlternateAudio: () => {},
             removeAllListeners: () => {},
             removeListener: () => {},
-            show: sandbox.stub()
+            show: sandbox.stub(),
+            setLabel: () => {},
         };
         stubs.mockControls = sandbox.mock(dash.mediaControls);
 
@@ -141,6 +149,7 @@ describe('lib/viewers/media/DashViewer', () => {
             sandbox.stub(dash, 'loadAssets');
             sandbox.stub(dash, 'isAutoplayEnabled').returns(true);
             sandbox.stub(dash, 'autoplay');
+            sandbox.stub(dash, 'loadUI');
 
             sandbox.stub(dash, 'getRepStatus').returns({ getPromise: () => Promise.resolve() });
             sandbox.stub(Promise, 'all').returns(stubs.promise);
@@ -152,6 +161,7 @@ describe('lib/viewers/media/DashViewer', () => {
                     expect(dash.loadDashPlayer).to.be.called;
                     expect(dash.resetLoadTimeout).to.be.called;
                     expect(dash.autoplay).to.be.called;
+                    expect(dash.loadUI).to.be.called;
                 })
                 .catch(() => {});
         });
@@ -171,7 +181,7 @@ describe('lib/viewers/media/DashViewer', () => {
 
         it('should not prefetch rep content if content is false', () => {
             sandbox
-                .mock(util)
+                .mock(stubs.api)
                 .expects('get')
                 .never();
             dash.prefetch({ assets: false, content: false });
@@ -181,7 +191,7 @@ describe('lib/viewers/media/DashViewer', () => {
         it('should not prefetch rep content if representation is not ready', () => {
             stubs.repReady.returns(false);
             sandbox
-                .mock(util)
+                .mock(stubs.api)
                 .expects('get')
                 .never();
 
@@ -193,9 +203,9 @@ describe('lib/viewers/media/DashViewer', () => {
             const contentUrl = 'someUrl';
             stubs.createUrl.returns(contentUrl);
             sandbox
-                .mock(util)
+                .mock(stubs.api)
                 .expects('get')
-                .withArgs(contentUrl, 'any');
+                .withArgs(contentUrl, { type: 'document' });
 
             dash.prefetch({ assets: false, content: true });
             expect(stubs.prefetchAssets).to.not.be.called;
@@ -217,6 +227,7 @@ describe('lib/viewers/media/DashViewer', () => {
             sandbox.stub(shaka, 'Player').returns(dash.player);
             stubs.mockPlayer.expects('addEventListener').withArgs('adaptation', sinon.match.func);
             stubs.mockPlayer.expects('addEventListener').withArgs('error', sinon.match.func);
+            stubs.mockPlayer.expects('addEventListener').withArgs('buffering', sinon.match.func);
             stubs.mockPlayer.expects('configure');
             stubs.mockPlayer
                 .expects('load')
@@ -259,12 +270,12 @@ describe('lib/viewers/media/DashViewer', () => {
             dash.options = {
                 file: {
                     watermark_info: {
-                        is_watermarked: false
+                        is_watermarked: false,
                     },
                     representations: {
-                        entries: [{ representation: 'dash' }]
-                    }
-                }
+                        entries: [{ representation: 'dash' }],
+                    },
+                },
             };
 
             dash.requestFilter('', stubs.req);
@@ -280,12 +291,12 @@ describe('lib/viewers/media/DashViewer', () => {
             dash.options = {
                 file: {
                     watermark_info: {
-                        is_watermarked: true
+                        is_watermarked: true,
                     },
                     representations: {
-                        entries: [{ representation: 'dash' }]
-                    }
-                }
+                        entries: [{ representation: 'dash' }],
+                    },
+                },
             };
 
             dash.requestFilter('', stubs.req);
@@ -532,8 +543,8 @@ describe('lib/viewers/media/DashViewer', () => {
                     severity: 2, // critical severity
                     category: 1,
                     code: 1100,
-                    data: ['foobar']
-                }
+                    data: ['foobar'],
+                },
             };
 
             dash.shakaErrorHandler(shakaError);
@@ -541,6 +552,8 @@ describe('lib/viewers/media/DashViewer', () => {
             const [event, error] = dash.emit.getCall(0).args;
             expect(event).to.equal('error');
             expect(error).to.be.instanceof(PreviewError);
+            expect(error.details.code).to.equal(shakaError.detail.code);
+            expect(error.details.severity).to.equal(shakaError.detail.severity);
             expect(error.code).to.equal('error_shaka');
         });
 
@@ -550,8 +563,8 @@ describe('lib/viewers/media/DashViewer', () => {
                     severity: 1, // recoverable severity
                     category: 1,
                     code: 1100,
-                    data: ['foobar']
-                }
+                    data: ['foobar'],
+                },
             };
 
             dash.shakaErrorHandler(shakaError);
@@ -564,7 +577,7 @@ describe('lib/viewers/media/DashViewer', () => {
                 severity: 2, // critical severity
                 category: 1,
                 code: 1100, // HTTP Error code
-                data: ['foobar']
+                data: ['foobar'],
             };
             dash.shakaErrorHandler(shakaError);
 
@@ -579,7 +592,7 @@ describe('lib/viewers/media/DashViewer', () => {
                 severity: 2, // critical severity
                 category: 1,
                 code: 1002, // hTTP Error code
-                data: ['foobar']
+                data: ['foobar'],
             };
             sandbox.stub(dash, 'handleDownloadError');
             dash.shakaErrorHandler(shakaError);
@@ -593,13 +606,13 @@ describe('lib/viewers/media/DashViewer', () => {
 
         afterEach(() => {
             Object.defineProperty(VideoBaseViewer.prototype, 'addEventListenersForMediaControls', {
-                value: listenerFunc
+                value: listenerFunc,
             });
         });
 
         it('should add event listeners to the media controls', () => {
             Object.defineProperty(VideoBaseViewer.prototype, 'addEventListenersForMediaControls', {
-                value: sandbox.mock()
+                value: sandbox.mock(),
             });
             stubs.mockControls.expects('addListener').withArgs('qualitychange', sinon.match.func);
             stubs.mockControls.expects('addListener').withArgs('subtitlechange', sinon.match.func);
@@ -616,13 +629,12 @@ describe('lib/viewers/media/DashViewer', () => {
             expect(dash.showMedia).to.not.be.called;
         });
 
-        it('should load the meta data for the media element, show the media/play button, load subs, check for autoplay, and set focus', () => {
+        it('should load the metadata for the media element, show the media/play button, load subs, check for autoplay, and set focus', () => {
             sandbox.stub(dash, 'isDestroyed').returns(false);
             sandbox.stub(dash, 'showMedia');
             sandbox.stub(dash, 'isAutoplayEnabled').returns(true);
             sandbox.stub(dash, 'autoplay');
             sandbox.stub(dash, 'loadFilmStrip');
-            sandbox.stub(dash, 'loadUI');
             sandbox.stub(dash, 'resize');
             sandbox.stub(dash, 'handleVolume');
             sandbox.stub(dash, 'startBandwidthTracking');
@@ -631,10 +643,11 @@ describe('lib/viewers/media/DashViewer', () => {
             sandbox.stub(dash, 'calculateVideoDimensions');
             sandbox.stub(dash, 'loadSubtitles');
             sandbox.stub(dash, 'loadAlternateAudio');
+            sandbox.stub(dash, 'loadUI');
 
+            dash.options.autoFocus = true;
             dash.loadeddataHandler();
             expect(dash.autoplay).to.be.called;
-            expect(dash.loadUI).to.be.called;
             expect(dash.showMedia).to.be.called;
             expect(dash.showPlayButton).to.be.called;
             expect(dash.calculateVideoDimensions).to.be.called;
@@ -644,6 +657,7 @@ describe('lib/viewers/media/DashViewer', () => {
             expect(dash.loaded).to.be.true;
             expect(document.activeElement).to.equal(dash.mediaContainerEl);
             expect(dash.mediaControls.show).to.be.called;
+            expect(dash.loadUI).to.be.called;
         });
     });
 
@@ -654,7 +668,7 @@ describe('lib/viewers/media/DashViewer', () => {
                 enableHDSettings: sandbox.stub(),
                 removeListener: sandbox.stub(),
                 removeAllListeners: sandbox.stub(),
-                destroy: sandbox.stub()
+                destroy: sandbox.stub(),
             };
 
             Object.defineProperty(VideoBaseViewer.prototype, 'loadUI', { value: sandbox.mock() });
@@ -687,11 +701,11 @@ describe('lib/viewers/media/DashViewer', () => {
                             {
                                 representation: 'filmstrip',
                                 content: { url_template: '' },
-                                metadata: { interval: 1 }
-                            }
-                        ]
-                    }
-                }
+                                metadata: { interval: 1 },
+                            },
+                        ],
+                    },
+                },
             };
             stubs.createUrl = sandbox.stub(dash, 'createContentUrlWithAuthParams');
             sandbox.stub(dash, 'getRepStatus');
@@ -706,7 +720,7 @@ describe('lib/viewers/media/DashViewer', () => {
         it('should do nothing if the filmstrip metadata field does not exist', () => {
             dash.options.file.representations.entries[1] = {
                 representation: 'filmstrip',
-                content: { url_template: '' }
+                content: { url_template: '' },
                 // Missing metadata field
             };
             dash.loadFilmStrip();
@@ -788,13 +802,94 @@ describe('lib/viewers/media/DashViewer', () => {
 
             expect(dash.textTracks).to.deep.equal([russian, foo, und, empty, doesntmatter, zero]);
         });
+    });
 
-        it('should do nothing if there are no available subtitles', () => {
-            const subs = [];
-            stubs.mockPlayer.expects('getTextTracks').returns(subs);
-            stubs.mockControls.expects('initSubtitles').never();
+    describe('loadAutoGeneratedCaptions', () => {
+        beforeEach(() => {
+            dash.autoCaptionDisplayer = {
+                append: () => {},
+                setTextVisibility: () => {},
+                isTextVisible: () => {},
+                destroy: () => {},
+            };
+            dash.createTextCues = sandbox.stub();
+            dash.setupAutoCaptionDisplayer = sandbox.stub();
+            stubs.mockPlayer = sandbox.mock(dash.player);
+            stubs.mockDisplayer = sandbox.mock(dash.autoCaptionDisplayer);
+        });
 
-            dash.loadSubtitles();
+        const transcript = {
+            appears: [
+                {
+                    start: 0,
+                    end: 1,
+                },
+            ],
+            text: 'sometext',
+        };
+
+        const cues = [{ 1: 'foo' }, { 2: 'bar' }];
+
+        it('should do nothing if the transcript has not changed', () => {
+            dash.transcript = transcript;
+            dash.loadAutoGeneratedCaptions(transcript);
+            expect(dash.createTextCues).to.not.be.called;
+        });
+
+        it('should do nothing if no text cues are found', () => {
+            dash.createTextCues.returns([]);
+            dash.setupAutoCaptionDisplayer = sandbox.stub();
+
+            dash.loadAutoGeneratedCaptions(transcript);
+            expect(dash.setupAutoCaptionDisplayer).to.not.be.called;
+        });
+
+        it('should destroy and reset an existing autoCaptionDisplayer', () => {
+            stubs.mockDisplayer.expects('destroy');
+            stubs.mockDisplayer.expects('setTextVisibility');
+            dash.createTextCues.returns(cues);
+            dash.loadAutoGeneratedCaptions(transcript);
+
+            expect(dash.setupAutoCaptionDisplayer).to.be.calledWith(cues);
+        });
+
+        it('should setup a new autoCaptionDisplayer if setting up for first time', () => {
+            dash.autoCaptionDisplayer = null;
+            dash.createTextCues.returns(cues);
+            stubs.mockControls.expects('initSubtitles').withArgs(['Auto-Generated'], 'English');
+            stubs.mockControls.expects('setLabel').withArgs(sandbox.match.any, 'Auto-Generated Captions');
+
+            dash.loadAutoGeneratedCaptions(transcript);
+            expect(dash.setupAutoCaptionDisplayer).to.be.calledWith(cues);
+        });
+    });
+
+    describe('createTextCues()', () => {
+        it('should correctly map cues', () => {
+            const transcript = { entries: [{ appears: [{ start: 1, end: 2 }], text: 'foo' }] };
+            const result = dash.createTextCues(transcript)[0];
+            expect(result.startTime).to.equal(1);
+            expect(result.endTime).to.equal(2);
+
+            expect(result.payload).to.equal('foo');
+        });
+    });
+
+    describe('setupAutoCaptionDisplayer()', () => {
+        beforeEach(() => {
+            stubs.appendStub = sandbox.stub();
+            sandbox.stub(shaka.text, 'SimpleTextDisplayer').returns({
+                append: stubs.appendStub,
+            });
+        });
+
+        it('should setup a simpleTextDisplayer and configure the player', () => {
+            stubs.mockPlayer.expects('configure').withArgs({
+                textDisplayFactory: sandbox.match.any,
+            });
+
+            dash.setupAutoCaptionDisplayer('foo');
+            expect(stubs.appendStub).to.be.called;
         });
     });
 
@@ -813,7 +908,7 @@ describe('lib/viewers/media/DashViewer', () => {
 
             expect(dash.audioTracks).to.deep.equal([
                 { language: 'eng', role: 'audio0' },
-                { language: 'rus', role: 'audio1' }
+                { language: 'rus', role: 'audio1' },
             ]);
         });
 
@@ -846,7 +941,18 @@ describe('lib/viewers/media/DashViewer', () => {
     });
 
     describe('handleSubtitle()', () => {
+        it('should select auto-generated track if auto-caption displayer exists', () => {
+            stubs.mockDisplayer.expects('setTextVisibility').withArgs(true);
+            sandbox.stub(dash.cache, 'get').returns('0');
+
+            dash.handleSubtitle();
+
+            expect(stubs.emit).to.be.calledWith('subtitlechange', 'Auto-Generated');
+        });
+
         it('should select track from front of text track list', () => {
+            dash.autoCaptionDisplayer = undefined;
+
             const english = { language: 'eng', id: 3 };
             const russian = { language: 'rus', id: 4 };
             const french = { language: 'fra', id: 5 };
@@ -862,6 +968,8 @@ describe('lib/viewers/media/DashViewer', () => {
         });
 
         it('should select track from end of text track list', () => {
+            dash.autoCaptionDisplayer = undefined;
+
             const english = { language: 'eng', id: 3 };
             const russian = { language: 'rus', id: 4 };
             const french = { language: 'fre', id: 5 };
@@ -877,6 +985,8 @@ describe('lib/viewers/media/DashViewer', () => {
         });
 
         it('should select track from middle of text track list', () => {
+            dash.autoCaptionDisplayer = undefined;
+
             const english = { language: 'eng', id: 3 };
             const russian = { language: 'rus', id: 4 };
             const french = { language: 'fre', id: 5 };
@@ -900,6 +1010,7 @@ describe('lib/viewers/media/DashViewer', () => {
             sandbox.stub(dash.cache, 'get').returns('-1');
             stubs.mockPlayer.expects('selectTextTrack').never();
             stubs.mockPlayer.expects('setTextTrackVisibility').withArgs(false);
+            stubs.mockDisplayer.expects('setTextVisibility').withArgs(false);
 
             dash.handleSubtitle();
 
@@ -916,7 +1027,7 @@ describe('lib/viewers/media/DashViewer', () => {
             dash.audioTracks = [
                 { language: 'eng', role: 'audio0' },
                 { language: 'eng', role: 'audio1' },
-                { language: 'eng', role: 'audio2' }
+                { language: 'eng', role: 'audio2' },
             ];
             sandbox.stub(dash.cache, 'get').returns('1');
 
@@ -928,7 +1039,7 @@ describe('lib/viewers/media/DashViewer', () => {
             dash.audioTracks = [
                 { language: 'eng', role: 'audio0' },
                 { language: 'eng', role: 'audio1' },
-                { language: 'eng', role: 'audio2' }
+                { language: 'eng', role: 'audio2' },
             ];
             sandbox.stub(dash.cache, 'get').returns('3');
 
@@ -940,9 +1051,10 @@ describe('lib/viewers/media/DashViewer', () => {
     describe('calculateVideoDimensions()', () => {
         it('should calculate the video dimensions based on the reps', () => {
             stubs.mockPlayer.expects('isAudioOnly').returns(false);
-            stubs.mockPlayer
-                .expects('getVariantTracks')
-                .returns([{ width: 200, videoId: 1 }, { width: 100, videoId: 2 }]);
+            stubs.mockPlayer.expects('getVariantTracks').returns([
+                { width: 200, videoId: 1 },
+                { width: 100, videoId: 2 },
+            ]);
             dash.calculateVideoDimensions();
             expect(dash.hdVideoId).to.equal(1);
             expect(dash.sdVideoId).to.equal(2);
@@ -951,9 +1063,10 @@ describe('lib/viewers/media/DashViewer', () => {
 
         it('should use SD video dimensions if no HD', () => {
             stubs.mockPlayer.expects('isAudioOnly').returns(false);
-            stubs.mockPlayer
-                .expects('getVariantTracks')
-                .returns([{ width: 640, videoId: 1, audioId: 2 }, { width: 640, videoId: 1, audioId: 3 }]);
+            stubs.mockPlayer.expects('getVariantTracks').returns([
+                { width: 640, videoId: 1, audioId: 2 },
+                { width: 640, videoId: 1, audioId: 3 },
+            ]);
             dash.calculateVideoDimensions();
             expect(dash.hdVideoId).to.equal(-1);
             expect(dash.sdVideoId).to.equal(1);
@@ -962,9 +1075,10 @@ describe('lib/viewers/media/DashViewer', () => {
 
         it('should default video dimensions when video is audio-only', () => {
             stubs.mockPlayer.expects('isAudioOnly').returns(true);
-            stubs.mockPlayer
-                .expects('getVariantTracks')
-                .returns([{ width: null, videoId: null, audioId: 1 }, { width: null, videoId: null, audioId: 2 }]);
+            stubs.mockPlayer.expects('getVariantTracks').returns([
+                { width: null, videoId: null, audioId: 1 },
+                { width: null, videoId: null, audioId: 2 },
+            ]);
             dash.calculateVideoDimensions();
             expect(dash.hdVideoId).to.equal(-1);
             expect(dash.sdVideoId).to.equal(-1);
@@ -1060,7 +1174,7 @@ describe('lib/viewers/media/DashViewer', () => {
             stubs.mockPlayer.expects('getStats').returns({
                 estimatedBandwidth: 2000,
                 streamBandwidth: 1000,
-                switchHistory: 'history'
+                switchHistory: 'history',
             });
             dash.getBandwidthInterval();
             expect(dash.bandwidthHistory[0]).to.deep.equal({ bandwidth: 2000, stream: 1000 });
@@ -1071,7 +1185,7 @@ describe('lib/viewers/media/DashViewer', () => {
             stubs.mockPlayer.expects('getStats').returns({
                 estimatedBandwidth: 2000,
                 streamBandwidth: 1000,
-                switchHistory: 'history'
+                switchHistory: 'history',
             });
             dash.statsEl = { textContent: '' };
             dash.mediaContainerEl = null;
@@ -1091,7 +1205,7 @@ describe('lib/viewers/media/DashViewer', () => {
     describe('removeStats()', () => {
         beforeEach(() => {
             dash.mediaContainerEl = {
-                removeChild: () => {}
+                removeChild: () => {},
             };
             stubs.mock = sandbox.mock(dash.mediaContainerEl);
         });
@@ -1158,11 +1272,11 @@ describe('lib/viewers/media/DashViewer', () => {
 
     describe('showGearHdIcon()', () => {
         const hdTrack = {
-            videoId: 1
+            videoId: 1,
         };
 
         const sdTrack = {
-            videoId: 2
+            videoId: 2,
         };
 
         beforeEach(() => {
@@ -1181,6 +1295,123 @@ describe('lib/viewers/media/DashViewer', () => {
             expect(dash.wrapperEl).to.have.class(CSS_CLASS_HD);
             dash.showGearHdIcon(sdTrack);
             expect(dash.wrapperEl).to.not.have.class(CSS_CLASS_HD);
+        });
+    });
+
+    describe('handleBuffering()', () => {
+        beforeEach(() => {
+            sandbox.stub(Timer, 'createTag').returns('foo');
+            sandbox.stub(Timer, 'get').returns({ elapsed: 5 });
+            sandbox.stub(Timer, 'reset');
+            sandbox.stub(Timer, 'start');
+            sandbox.stub(Timer, 'stop');
+        });
+
+        it('should start a timer if buffering is true', () => {
+            dash.handleBuffering({ buffering: true });
+            expect(Timer.start).to.have.been.called;
+            expect(Timer.stop).not.to.have.been.called;
+            expect(Timer.reset).not.to.have.been.called;
+            expect(dash.metrics.totalBufferLag).to.equal(0);
+        });
+
+        it('should stop the timer if buffering is false', () => {
+            dash.handleBuffering({ buffering: false });
+            expect(Timer.start).not.to.have.been.called;
+            expect(Timer.stop).to.have.been.called;
+            expect(Timer.reset).to.have.been.called;
+            expect(dash.metrics.totalBufferLag).to.equal(5);
+        });
+    });
+
+    describe('processBufferFillMetric()', () => {
+        beforeEach(() => {
+            sandbox.stub(Timer, 'createTag').returns('foo');
+            sandbox.stub(Timer, 'get').returns({ elapsed: 5 });
+            sandbox.stub(dash, 'emitMetric');
+        });
+
+        it('should process the buffer fill metric', () => {
+            dash.processBufferFillMetric();
+
+            expect(Timer.createTag).to.have.been.calledWith(0, 'bufferFill');
+            expect(Timer.get).to.have.been.calledWith('foo');
+            expect(dash.emitMetric).to.have.been.calledWith('media_metric_buffer_fill', 5);
+            expect(dash.metrics.bufferFill).to.equal(5);
+        });
+    });
+
+    describe('processMetrics()', () => {
+        beforeEach(() => {
+            sandbox.stub(dash, 'determineWatchLength').returns(10);
+            sandbox.stub(dash, 'emitMetric');
+            dash.mediaEl.duration = 5;
+        });
+
+        it('should not emit an event if loaded is false', () => {
+            dash.loaded = false;
+            const expMetrics = {
+                bufferFill: 0,
+                duration: 0,
+                lagRatio: 0,
+                seeked: false,
+                totalBufferLag: 0,
+                watchLength: 0,
+            };
+
+            dash.processMetrics();
+
+            expect(dash.emitMetric).not.to.have.been.called;
+            expect(dash.metrics).to.be.eql(expMetrics);
+        });
+
+        it('should process the current playback metrics if loaded', () => {
+            dash.loaded = true;
+            dash.metrics.totalBufferLag = 1000;
+
+            const expMetrics = {
+                bufferFill: 0,
+                duration: 5000,
+                lagRatio: 100,
+                seeked: false,
+                totalBufferLag: 1000,
+                watchLength: 10,
+            };
+
+            dash.processMetrics();
+
+            expect(dash.emitMetric).to.have.been.calledWith('media_metric_end_playback', 100);
+            expect(dash.metrics).to.be.eql(expMetrics);
+        });
+    });
+
+    describe('determineWatchLength()', () => {
+        it('should return -1 if mediaEl does not exist', () => {
+            dash.mediaEl = null;
+
+            expect(dash.determineWatchLength()).to.be.equal(-1);
+        });
+
+        it('should return -1 if mediaEl.played is falsy', () => {
+            dash.mediaEl.played = false;
+
+            expect(dash.determineWatchLength()).to.be.equal(-1);
+        });
+
+        it('should return 0 if there are no played parts', () => {
+            dash.mediaEl.played = [];
+
+            expect(dash.determineWatchLength()).to.be.equal(0);
+        });
+
+        it('should return the sum of all the played parts', () => {
+            dash.mediaEl.played = { length: 2, start: sandbox.stub(), end: sandbox.stub() };
+            dash.mediaEl.played.start.withArgs(0).returns(0);
+            dash.mediaEl.played.end.withArgs(0).returns(5);
+            dash.mediaEl.played.start.withArgs(1).returns(10);
+            dash.mediaEl.played.end.withArgs(1).returns(15);
+
+            expect(dash.determineWatchLength()).to.be.equal(10000);
         });
     });
 });

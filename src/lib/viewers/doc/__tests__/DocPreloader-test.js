@@ -1,4 +1,5 @@
 /* eslint-disable no-unused-expressions */
+import Api from '../../../api';
 import DocPreloader from '../DocPreloader';
 import * as util from '../../../util';
 import {
@@ -7,7 +8,6 @@ import {
     CLASS_BOX_PREVIEW_PRELOAD_OVERLAY,
     CLASS_INVISIBLE,
     CLASS_PREVIEW_LOADED,
-    CLASS_SPINNER
 } from '../../../constants';
 
 const PDFJS_CSS_UNITS = 96.0 / 72.0;
@@ -25,10 +25,14 @@ describe('lib/viewers/doc/DocPreloader', () => {
     beforeEach(() => {
         fixture.load('viewers/doc/__tests__/DocPreloader-test.html');
         containerEl = document.querySelector('.container');
-        docPreloader = new DocPreloader({
-            hideLoadingIndicator: () => {}
-        });
         stubs = {};
+        stubs.api = new Api();
+        docPreloader = new DocPreloader({ hideLoadingIndicator: () => {} }, { api: stubs.api });
+
+        docPreloader.previewUI = {
+            hideLoadingIndicator: sandbox.stub(),
+            previewContainer: document.createElement('div'),
+        };
     });
 
     afterEach(() => {
@@ -39,7 +43,7 @@ describe('lib/viewers/doc/DocPreloader', () => {
     describe('showPreload()', () => {
         it('should not do anything if document is loaded', () => {
             sandbox.stub(docPreloader, 'checkDocumentLoaded').returns(true);
-            sandbox.stub(util, 'get').returns(Promise.resolve({}));
+            sandbox.stub(stubs.api, 'get').returns(Promise.resolve({}));
             sandbox.stub(docPreloader, 'bindDOMListeners');
 
             return docPreloader.showPreload('someUrl', containerEl).then(() => {
@@ -50,15 +54,14 @@ describe('lib/viewers/doc/DocPreloader', () => {
 
         it('should set up preload DOM structure and bind image load handler', () => {
             const imgSrc = 'https://someblobimgsrc/';
-            sandbox.stub(util, 'get').returns(Promise.resolve({}));
             sandbox.stub(URL, 'createObjectURL').returns(imgSrc);
             sandbox.stub(docPreloader, 'bindDOMListeners');
+            sandbox.stub(stubs.api, 'get').returns(Promise.resolve({}));
 
             return docPreloader.showPreload('someUrl', containerEl).then(() => {
                 expect(docPreloader.wrapperEl).to.contain(`.${CLASS_BOX_PREVIEW_PRELOAD}`);
                 expect(docPreloader.preloadEl).to.contain(`.${CLASS_BOX_PREVIEW_PRELOAD_CONTENT}`);
                 expect(docPreloader.preloadEl).to.contain(`.${CLASS_BOX_PREVIEW_PRELOAD_OVERLAY}`);
-                expect(docPreloader.overlayEl).to.contain(`.${CLASS_SPINNER}`);
                 expect(docPreloader.imageEl.src).to.equal(imgSrc);
                 expect(containerEl).to.contain(docPreloader.wrapperEl);
                 expect(docPreloader.bindDOMListeners).to.be.called;
@@ -71,7 +74,7 @@ describe('lib/viewers/doc/DocPreloader', () => {
             stubs.checkDocumentLoaded = sandbox.stub(docPreloader, 'checkDocumentLoaded');
             stubs.emit = sandbox.stub(docPreloader, 'emit');
             stubs.setDimensions = sandbox.stub(util, 'setDimensions');
-            stubs.hideLoadingIndicator = sandbox.stub(docPreloader.previewUI, 'hideLoadingIndicator');
+            stubs.hideLoadingIndicator = docPreloader.previewUI.hideLoadingIndicator;
             docPreloader.imageEl = {};
             docPreloader.preloadEl = document.createElement('div');
         });
@@ -100,7 +103,7 @@ describe('lib/viewers/doc/DocPreloader', () => {
             expect(docPreloader.preloadEl).to.not.have.class(CLASS_INVISIBLE);
         });
 
-        [5, 10, 11, 100].forEach((numPages) => {
+        [5, 10, 11, 100].forEach(numPages => {
             it('should create and set dimensions for numPages - 1 placeholders', () => {
                 docPreloader.scaleAndShowPreload(100, 100, numPages);
 
@@ -141,7 +144,7 @@ describe('lib/viewers/doc/DocPreloader', () => {
 
         it('should clean up preload after transition ends', () => {
             docPreloader.wrapperEl = document.createElement('div');
-            sandbox.stub()
+            sandbox.stub();
 
             docPreloader.hidePreload();
             docPreloader.wrapperEl.dispatchEvent(new Event('transitionend'));
@@ -151,7 +154,7 @@ describe('lib/viewers/doc/DocPreloader', () => {
 
         it('should clean up preload after scroll event', () => {
             docPreloader.wrapperEl = document.createElement('div');
-            sandbox.stub()
+            sandbox.stub();
 
             docPreloader.hidePreload();
             docPreloader.wrapperEl.dispatchEvent(new Event('scroll'));
@@ -168,7 +171,10 @@ describe('lib/viewers/doc/DocPreloader', () => {
             docPreloader.srcUrl = 'blah';
             containerEl.appendChild(docPreloader.wrapperEl);
 
-            sandbox.mock(URL).expects('revokeObjectURL').withArgs(docPreloader.srcUrl);
+            sandbox
+                .mock(URL)
+                .expects('revokeObjectURL')
+                .withArgs(docPreloader.srcUrl);
 
             docPreloader.cleanupPreload();
 
@@ -181,7 +187,7 @@ describe('lib/viewers/doc/DocPreloader', () => {
     describe('bindDOMListeners()', () => {
         it('should bind load event listener to image element', () => {
             docPreloader.imageEl = {
-                addEventListener: sandbox.stub()
+                addEventListener: sandbox.stub(),
             };
 
             docPreloader.bindDOMListeners();
@@ -193,7 +199,7 @@ describe('lib/viewers/doc/DocPreloader', () => {
     describe('unbindDOMListeners()', () => {
         it('should unbind load event listener to image element', () => {
             docPreloader.imageEl = {
-                removeEventListener: sandbox.stub()
+                removeEventListener: sandbox.stub(),
             };
 
             docPreloader.unbindDOMListeners();
@@ -265,15 +271,15 @@ describe('lib/viewers/doc/DocPreloader', () => {
                 Promise.resolve({
                     pdfWidth,
                     pdfHeight,
-                    numPages
-                })
+                    numPages,
+                }),
             );
 
             const scaledWidth = 200;
             const scaledHeight = 200;
             stubs.getScaledDimensions.returns({
                 scaledWidth,
-                scaledHeight
+                scaledHeight,
             });
 
             docPreloader.preloadEl = {};
@@ -290,13 +296,13 @@ describe('lib/viewers/doc/DocPreloader', () => {
                 Promise.resolve({
                     pdfWidth: 100,
                     pdfHeight: 100,
-                    numPages: NUM_PAGES_MAX + 1 // NUM_PAGES_MAX + 1
-                })
+                    numPages: NUM_PAGES_MAX + 1, // NUM_PAGES_MAX + 1
+                }),
             );
 
             stubs.getScaledDimensions.returns({
                 scaledWidth: 200,
-                scaledHeight: 200
+                scaledHeight: 200,
             });
 
             docPreloader.preloadEl = {};
@@ -310,7 +316,7 @@ describe('lib/viewers/doc/DocPreloader', () => {
             stubs.readEXIF.returns(Promise.reject());
             stubs.getScaledDimensions.returns({
                 scaledWidth: 200,
-                scaledHeight: 200
+                scaledHeight: 200,
             });
 
             docPreloader.preloadEl = {};
@@ -319,7 +325,7 @@ describe('lib/viewers/doc/DocPreloader', () => {
             const naturalHeight = 100;
             docPreloader.imageEl = {
                 naturalWidth,
-                naturalHeight
+                naturalHeight,
             };
 
             return docPreloader.loadHandler().then(() => {
@@ -345,7 +351,7 @@ describe('lib/viewers/doc/DocPreloader', () => {
             const scaledDimensions = docPreloader.getScaledDimensions(100, 100);
             expect(scaledDimensions).to.deep.equal({
                 scaledWidth: Math.floor(expectedScale * 100),
-                scaledHeight: Math.floor(expectedScale * 100)
+                scaledHeight: Math.floor(expectedScale * 100),
             });
         });
 
@@ -363,7 +369,7 @@ describe('lib/viewers/doc/DocPreloader', () => {
             const expectedScale = (clientHeight - 5) / pdfHeight;
             expect(scaledDimensions).to.deep.equal({
                 scaledWidth: Math.floor(expectedScale * pdfWidth),
-                scaledHeight: Math.floor(expectedScale * pdfHeight)
+                scaledHeight: Math.floor(expectedScale * pdfHeight),
             });
         });
 
@@ -381,7 +387,7 @@ describe('lib/viewers/doc/DocPreloader', () => {
             const expectedScale = (clientWidth - 40) / pdfWidth;
             expect(scaledDimensions).to.deep.equal({
                 scaledWidth: Math.floor(expectedScale * pdfWidth),
-                scaledHeight: Math.floor(expectedScale * pdfHeight)
+                scaledHeight: Math.floor(expectedScale * pdfHeight),
             });
         });
 
@@ -399,7 +405,7 @@ describe('lib/viewers/doc/DocPreloader', () => {
             const expectedScale = (clientWidth - 40) / pdfWidth;
             expect(scaledDimensions).to.deep.equal({
                 scaledWidth: Math.floor(expectedScale * pdfWidth),
-                scaledHeight: Math.floor(expectedScale * pdfHeight)
+                scaledHeight: Math.floor(expectedScale * pdfHeight),
             });
         });
     });
@@ -410,7 +416,7 @@ describe('lib/viewers/doc/DocPreloader', () => {
         beforeEach(() => {
             fakeImageEl = {
                 naturalWidth: 50,
-                naturalHeight: 100
+                naturalHeight: 100,
             };
         });
 
@@ -419,20 +425,22 @@ describe('lib/viewers/doc/DocPreloader', () => {
                 getData: (imageEl, func) => {
                     func();
                 },
-                getTag: sandbox.stub().returns('')
+                getTag: sandbox.stub().returns(''),
             };
-            docPreloader.readEXIF(fakeImageEl)
+            docPreloader
+                .readEXIF(fakeImageEl)
                 .then(() => Assert.fail())
-                .catch((err) => {
+                .catch(err => {
                     expect(err).to.be.an('error');
                 });
         });
 
         it('should return a promise that eventually rejects if EXIF parser is not available', () => {
             window.EXIF = null;
-            return docPreloader.readEXIF(fakeImageEl)
+            return docPreloader
+                .readEXIF(fakeImageEl)
                 .then(() => Assert.fail())
-                .catch((err) => {
+                .catch(err => {
                     expect(err).to.be.an('error');
                 });
         });
@@ -444,17 +452,18 @@ describe('lib/viewers/doc/DocPreloader', () => {
 
             const exifRawArray = `pdfWidth:${pdfWidth}pts,pdfHeight:${pdfHeight}pts,numPages:${numPages}`
                 .split('')
-                .map((c) => c.charCodeAt(0));
+                .map(c => c.charCodeAt(0));
             window.EXIF = {
                 getData: (imageEl, func) => {
                     func();
                 },
-                getTag: sandbox.stub().returns(exifRawArray)
+                getTag: sandbox.stub().returns(exifRawArray),
             };
 
-            return docPreloader.readEXIF(fakeImageEl)
+            return docPreloader
+                .readEXIF(fakeImageEl)
                 .then(() => Assert.fail())
-                .catch((err) => {
+                .catch(err => {
                     expect(err).to.be.an('error');
                 });
         });
@@ -466,17 +475,18 @@ describe('lib/viewers/doc/DocPreloader', () => {
 
             const exifRawArray = `pdfWidth:${pdfWidth}pts,pdfHeight:${pdfHeight}pts,numPages:${numPages}`
                 .split('')
-                .map((c) => c.charCodeAt(0));
+                .map(c => c.charCodeAt(0));
             window.EXIF = {
                 getData: (imageEl, func) => {
                     func();
                 },
-                getTag: sandbox.stub().returns(exifRawArray)
+                getTag: sandbox.stub().returns(exifRawArray),
             };
 
-            return docPreloader.readEXIF(fakeImageEl)
+            return docPreloader
+                .readEXIF(fakeImageEl)
                 .then(() => Assert.fail())
-                .catch((err) => {
+                .catch(err => {
                     expect(err).to.be.an('error');
                 });
         });
@@ -488,20 +498,21 @@ describe('lib/viewers/doc/DocPreloader', () => {
 
             const exifRawArray = `pdfWidth:${pdfWidth}pts,pdfHeight:${pdfHeight}pts,numPages:${numPages}`
                 .split('')
-                .map((c) => c.charCodeAt(0));
+                .map(c => c.charCodeAt(0));
             window.EXIF = {
                 getData: (imageEl, func) => {
                     func();
                 },
-                getTag: sandbox.stub().returns(exifRawArray)
+                getTag: sandbox.stub().returns(exifRawArray),
             };
 
-            return docPreloader.readEXIF(fakeImageEl)
-                .then((response) => {
+            return docPreloader
+                .readEXIF(fakeImageEl)
+                .then(response => {
                     response.should.deep.equal({
                         pdfWidth: pdfWidth * PDFJS_CSS_UNITS,
                         pdfHeight: pdfHeight * PDFJS_CSS_UNITS,
-                        numPages
+                        numPages,
                     });
                 })
                 .catch(() => Assert.fail());
@@ -514,20 +525,21 @@ describe('lib/viewers/doc/DocPreloader', () => {
 
             const exifRawArray = `pdfWidth:${pdfWidth}pts,pdfHeight:${pdfHeight}pts,numPages:${numPages}`
                 .split('')
-                .map((c) => c.charCodeAt(0));
+                .map(c => c.charCodeAt(0));
             window.EXIF = {
                 getData: (imageEl, func) => {
                     func();
                 },
-                getTag: sandbox.stub().returns(exifRawArray)
+                getTag: sandbox.stub().returns(exifRawArray),
             };
 
-            return docPreloader.readEXIF(fakeImageEl)
-                .then((response) => {
+            return docPreloader
+                .readEXIF(fakeImageEl)
+                .then(response => {
                     response.should.deep.equal({
                         pdfWidth: pdfHeight * PDFJS_CSS_UNITS,
                         pdfHeight: pdfWidth * PDFJS_CSS_UNITS,
-                        numPages
+                        numPages,
                     });
                 })
                 .catch(() => Assert.fail());
@@ -536,17 +548,99 @@ describe('lib/viewers/doc/DocPreloader', () => {
 
     describe('checkDocumentLoaded()', () => {
         beforeEach(() => {
-            docPreloader.containerEl = document.createElement('div');
+            docPreloader.previewUI.previewContainer = document.createElement('div');
         });
 
         it('should hide preload and return true if container element does have loaded class', () => {
-            docPreloader.containerEl.classList.add(CLASS_PREVIEW_LOADED);
+            docPreloader.previewUI.previewContainer.classList.add(CLASS_PREVIEW_LOADED);
             sandbox.mock(docPreloader).expects('hidePreload');
             expect(docPreloader.checkDocumentLoaded()).to.be.true;
         });
 
         it('should return false if container element does not have loaded class', () => {
             expect(docPreloader.checkDocumentLoaded()).to.be.false;
+        });
+    });
+
+    describe('resize()', () => {
+        beforeEach(() => {
+            sandbox.stub(docPreloader, 'getScaledWidthAndHeight').returns({
+                scaledWidth: 1000,
+                scaledHeight: 800,
+            });
+            sandbox.stub(docPreloader, 'getScaledDimensions').returns({
+                scaledWidth: 1000,
+                scaledHeight: 800,
+            });
+            sandbox.stub(util, 'setDimensions');
+            docPreloader.preloadEl = document.createElement('div');
+            docPreloader.preloadEl.innerHTML = `<img class="${CLASS_BOX_PREVIEW_PRELOAD_CONTENT}" /><div class="${CLASS_BOX_PREVIEW_PRELOAD_CONTENT}" />`;
+        });
+
+        it('should short circuit if there is no preload element to resize', () => {
+            docPreloader.preloadEl = null;
+            docPreloader.resize();
+            expect(docPreloader.getScaledWidthAndHeight).to.not.be.called;
+        });
+
+        it('should short circuit if there is no pdf data or image element', () => {
+            docPreloader.pdfData = null;
+            docPreloader.imageEl = null;
+            docPreloader.resize();
+            expect(docPreloader.getScaledWidthAndHeight).to.not.be.called;
+        });
+
+        it('should prefer to resize using the pdfData', () => {
+            docPreloader.pdfData = {
+                pdfWidth: 800,
+                pdfHeight: 600,
+            };
+
+            docPreloader.resize();
+            expect(docPreloader.getScaledWidthAndHeight).to.be.called;
+            expect(docPreloader.getScaledDimensions).not.to.be.called;
+        });
+
+        it('should resize using image element dimensions if available', () => {
+            docPreloader.pdfData = null;
+            docPreloader.imageEl = {
+                naturalWidth: 800,
+                naturalHeight: 600,
+            };
+
+            docPreloader.resize();
+            expect(docPreloader.getScaledDimensions).to.be.called;
+            expect(docPreloader.getScaledWidthAndHeight).not.to.be.called;
+        });
+
+        it('should resize all the elements', () => {
+            docPreloader.pdfData = {
+                pdfWidth: 800,
+                pdfHeight: 600,
+            };
+            docPreloader.resize();
+            expect(docPreloader.getScaledWidthAndHeight).to.be.called;
+            expect(util.setDimensions).to.be.calledTwice;
+        });
+    });
+
+    describe('getScaledWidthAndHeight()', () => {
+        const scaledDimensions = {
+            scaledWidth: 1000,
+            scaledHeight: 800,
+        };
+        const pdfData = {
+            pdfWidth: 800,
+            pdfHeight: 600,
+        };
+        beforeEach(() => {
+            sandbox.stub(docPreloader, 'getScaledDimensions').returns(scaledDimensions);
+        });
+
+        it('should return the scaled width and height', () => {
+            const scaledWidthAndHeight = docPreloader.getScaledWidthAndHeight(pdfData);
+            expect(docPreloader.getScaledDimensions).to.be.calledWith(pdfData.pdfWidth, pdfData.pdfHeight);
+            expect(scaledWidthAndHeight).to.deep.equal(scaledDimensions);
         });
     });
 });

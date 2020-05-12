@@ -1,12 +1,12 @@
 /* eslint-disable no-unused-expressions */
+import Api from '../../../api';
 import ImageBaseViewer from '../ImageBaseViewer';
 import BaseViewer from '../../BaseViewer';
 import Browser from '../../../Browser';
 import fullscreen from '../../../Fullscreen';
 import PreviewError from '../../../PreviewError';
-import * as util from '../../../util';
-import { ICON_ZOOM_IN, ICON_ZOOM_OUT } from '../../../icons/icons';
 import { VIEWER_EVENT } from '../../../events';
+import * as util from '../../../util';
 
 const CSS_CLASS_PANNING = 'panning';
 const CSS_CLASS_ZOOMABLE = 'zoomable';
@@ -27,10 +27,12 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
         fixture.load('viewers/image/__tests__/ImageBaseViewer-test.html');
         stubs.emit = sandbox.stub(fullscreen, 'addListener');
         containerEl = document.querySelector('.container');
+        stubs.api = new Api();
         imageBase = new ImageBaseViewer({
+            api: stubs.api,
             file: {
-                id: '1234'
-            }
+                id: '1234',
+            },
         });
         imageBase.containerEl = containerEl;
         imageBase.imageEl = document.createElement('div');
@@ -57,7 +59,7 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
             sandbox.stub(imageBase.imageEl, 'removeEventListener');
 
             Object.defineProperty(Object.getPrototypeOf(ImageBaseViewer.prototype), 'destroy', {
-                value: sandbox.stub()
+                value: sandbox.stub(),
             });
 
             imageBase.destroy();
@@ -101,7 +103,7 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
             sandbox.stub(imageBase, 'zoom');
 
             Object.defineProperty(Object.getPrototypeOf(ImageBaseViewer.prototype), 'resize', {
-                value: sandbox.stub()
+                value: sandbox.stub(),
             });
 
             imageBase.resize();
@@ -210,23 +212,22 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
 
     describe('loadUI()', () => {
         it('should create controls and add control buttons for zoom', () => {
-            sandbox.stub(imageBase, 'bindControlListeners');
             imageBase.loadUI();
 
             expect(imageBase.controls).to.not.be.undefined;
-            expect(imageBase.bindControlListeners).to.be.called;
+            expect(imageBase.zoomControls).to.not.be.undefined;
         });
     });
 
     describe('setOriginalImageSize()', () => {
-        it('should use the naturalHeight and naturalWidth when available', (done) => {
+        it('should use the naturalHeight and naturalWidth when available', done => {
             const imageEl = {
                 naturalWidth: 100,
                 naturalHeight: 100,
                 setAttribute: (name, value) => {
                     imageEl[name] = value;
                 },
-                getAttribute: (name) => imageEl[name]
+                getAttribute: name => imageEl[name],
             };
 
             const promise = imageBase.setOriginalImageSize(imageEl);
@@ -241,17 +242,17 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
                 });
         });
 
-        it('should default to 300x150 when naturalHeight and naturalWidth are 0x0', (done) => {
+        it('should default to 300x150 when naturalHeight and naturalWidth are 0x0', done => {
             const imageEl = {
                 naturalWidth: 0,
                 naturalHeight: 0,
                 setAttribute: (name, value) => {
                     imageEl[name] = value;
                 },
-                getAttribute: (name) => imageEl[name]
+                getAttribute: name => imageEl[name],
             };
 
-            sandbox.stub(util, 'get').returns(Promise.resolve('not real a image'));
+            sandbox.stub(stubs.api, 'get').resolves('not real a image');
             const promise = imageBase.setOriginalImageSize(imageEl);
             promise
                 .then(() => {
@@ -264,33 +265,11 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
                 });
         });
 
-        it('should resolve when the get call fails', (done) => {
+        it('should resolve when the get call fails', done => {
             const imageEl = {};
-            sandbox.stub(util, 'get').returns(Promise.reject());
+            sandbox.stub(stubs.api, 'get').returns(Promise.reject());
             const promise = imageBase.setOriginalImageSize(imageEl);
             promise.then(() => Assert.fail()).catch(() => done());
-        });
-    });
-
-    describe('bindControlListeners()', () => {
-        it('should add the correct controls', () => {
-            imageBase.controls = {
-                add: sandbox.stub()
-            };
-
-            imageBase.bindControlListeners();
-            expect(imageBase.controls.add).to.be.calledWith(
-                __('zoom_out'),
-                imageBase.zoomOut,
-                'bp-image-zoom-out-icon',
-                ICON_ZOOM_OUT
-            );
-            expect(imageBase.controls.add).to.be.calledWith(
-                __('zoom_in'),
-                imageBase.zoomIn,
-                'bp-image-zoom-in-icon',
-                ICON_ZOOM_IN
-            );
         });
     });
 
@@ -306,7 +285,7 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
                 metaKey: null,
                 clientX: 1,
                 clientY: 1,
-                preventDefault: sandbox.stub()
+                preventDefault: sandbox.stub(),
             };
             imageBase.handleMouseDown(event);
             event.button = 1;
@@ -325,7 +304,7 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
                 metaKey: null,
                 clientX: 1,
                 clientY: 1,
-                preventDefault: sandbox.stub()
+                preventDefault: sandbox.stub(),
             };
             imageBase.handleMouseDown(event);
             expect(stubs.pan).to.have.been.called;
@@ -346,7 +325,7 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
                 metaKey: null,
                 clientX: 1,
                 clientY: 1,
-                preventDefault: sandbox.stub()
+                preventDefault: sandbox.stub(),
             };
             imageBase.handleMouseUp(event);
             event.button = 1;
@@ -365,7 +344,7 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
                 metaKey: null,
                 clientX: 1,
                 clientY: 1,
-                preventDefault: sandbox.stub()
+                preventDefault: sandbox.stub(),
             };
             imageBase.isZoomable = true;
             imageBase.handleMouseUp(event);
@@ -379,7 +358,7 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
                 metaKey: null,
                 clientX: 1,
                 clientY: 1,
-                preventDefault: sandbox.stub()
+                preventDefault: sandbox.stub(),
             };
             imageBase.isZoomable = false;
             imageBase.didPan = false;
@@ -394,7 +373,7 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
                 metaKey: null,
                 clientX: 1,
                 clientY: 1,
-                preventDefault: sandbox.stub()
+                preventDefault: sandbox.stub(),
             };
             imageBase.isZoomable = false;
             imageBase.didPan = true;
@@ -407,7 +386,7 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
         it('should prevent drag events on the image', () => {
             const event = {
                 preventDefault: sandbox.stub(),
-                stopPropagation: sandbox.stub()
+                stopPropagation: sandbox.stub(),
             };
             imageBase.cancelDragEvent(event);
             expect(event.preventDefault).to.be.called;
@@ -462,7 +441,7 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
         beforeEach(() => {
             imageBase.imageEl = {
                 addEventListener: sandbox.stub(),
-                removeEventListener: sandbox.stub()
+                removeEventListener: sandbox.stub(),
             };
 
             sandbox.stub(document, 'addEventListener');
@@ -497,7 +476,7 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
         beforeEach(() => {
             imageBase.imageEl = {
                 addEventListener: sandbox.stub(),
-                removeEventListener: sandbox.stub()
+                removeEventListener: sandbox.stub(),
             };
 
             imageBase.imageEl.removeEventListener = sandbox.stub();
@@ -542,13 +521,13 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
 
         beforeEach(() => {
             Object.defineProperty(Object.getPrototypeOf(ImageBaseViewer.prototype), 'handleDownloadError', {
-                value: sandbox.stub()
+                value: sandbox.stub(),
             });
         });
 
         afterEach(() => {
             Object.defineProperty(Object.getPrototypeOf(ImageBaseViewer.prototype), 'handleDownloadError', {
-                value: handleDownloadErrorFunc
+                value: handleDownloadErrorFunc,
             });
         });
 
@@ -572,11 +551,11 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
             stubs.setOriginalImageSize = sandbox.stub(imageBase, 'setOriginalImageSize');
             imageBase.options = {
                 file: {
-                    id: 1
+                    id: 1,
                 },
                 viewer: {
-                    viewerName: 'Image'
-                }
+                    viewerName: 'Image',
+                },
             };
         });
 
@@ -592,7 +571,7 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
             expect(stubs.loadUI).to.not.have.been.called;
         });
 
-        it('should load UI if not destroyed', (done) => {
+        it('should load UI if not destroyed', done => {
             imageBase.on(VIEWER_EVENT.load, () => {
                 expect(imageBase.loaded).to.be.true;
                 expect(stubs.zoom).to.have.been.called;
@@ -610,7 +589,7 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
     describe('disableViewerControls()', () => {
         it('should disable viewer controls', () => {
             imageBase.controls = {
-                disable: sandbox.stub()
+                disable: sandbox.stub(),
             };
             sandbox.stub(imageBase, 'unbindDOMListeners');
             imageBase.disableViewerControls();
@@ -624,7 +603,7 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
     describe('enableViewerControls()', () => {
         it('should enable viewer controls', () => {
             imageBase.controls = {
-                enable: sandbox.stub()
+                enable: sandbox.stub(),
             };
             imageBase.isMobile = true;
             sandbox.stub(imageBase, 'bindDOMListeners');
@@ -637,13 +616,83 @@ describe('lib/viewers/image/ImageBaseViewer', () => {
 
         it('should update cursor if not on mobile', () => {
             imageBase.controls = {
-                enable: sandbox.stub()
+                enable: sandbox.stub(),
             };
             imageBase.isMobile = false;
             sandbox.stub(imageBase, 'bindDOMListeners');
             sandbox.stub(imageBase, 'updateCursor');
             imageBase.enableViewerControls();
             expect(imageBase.updateCursor).to.be.called;
+        });
+    });
+
+    describe('print()', () => {
+        beforeEach(() => {
+            stubs.execCommand = sandbox.stub();
+            stubs.focus = sandbox.stub();
+            stubs.print = sandbox.stub();
+            stubs.mockIframe = {
+                addEventListener() {},
+                contentWindow: {
+                    document: {
+                        execCommand: stubs.execCommand,
+                    },
+                    focus: stubs.focus,
+                    print: stubs.print,
+                },
+                contentDocument: {
+                    querySelectorAll: sandbox.stub().returns(containerEl.querySelectorAll('img')),
+                },
+                removeEventListener() {},
+            };
+
+            stubs.openContentInsideIframe = sandbox.stub(util, 'openContentInsideIframe').returns(stubs.mockIframe);
+            stubs.getName = sandbox.stub(Browser, 'getName');
+        });
+
+        it('should open the content inside an iframe, center, and focus', () => {
+            imageBase.print();
+            expect(stubs.openContentInsideIframe).to.be.called;
+            expect(imageBase.printImages[0].getAttribute('style')).to.be.equal(
+                'display: block; margin: 0 auto; width: 100%',
+            );
+            expect(stubs.focus).to.be.called;
+        });
+
+        it('should execute the print command if the browser is Explorer', done => {
+            stubs.getName.returns('Explorer');
+            stubs.mockIframe.addEventListener = (type, callback) => {
+                callback();
+                expect(stubs.execCommand).to.be.calledWith('print', false, null);
+
+                done();
+            };
+
+            imageBase.print();
+        });
+
+        it('should execute the print command if the browser is Edge', done => {
+            stubs.getName.returns('Edge');
+            stubs.mockIframe.addEventListener = (type, callback) => {
+                callback();
+                expect(stubs.execCommand).to.be.calledWith('print', false, null);
+
+                done();
+            };
+
+            imageBase.print();
+        });
+
+        it('should call the contentWindow print for other browsers', done => {
+            stubs.getName.returns('Chrome');
+            stubs.mockIframe.addEventListener = (type, callback) => {
+                callback();
+                expect(stubs.print).to.be.called;
+
+                done();
+            };
+
+            imageBase.print();
         });
     });
 });

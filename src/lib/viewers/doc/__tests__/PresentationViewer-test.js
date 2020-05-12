@@ -5,8 +5,6 @@ import DocBaseViewer from '../DocBaseViewer';
 import PresentationPreloader from '../PresentationPreloader';
 import { CLASS_INVISIBLE } from '../../../constants';
 
-import { ICON_ZOOM_OUT, ICON_ZOOM_IN, ICON_FULLSCREEN_IN, ICON_FULLSCREEN_OUT } from '../../../icons/icons';
-
 const sandbox = sinon.sandbox.create();
 
 let containerEl;
@@ -29,12 +27,12 @@ describe('lib/viewers/doc/PresentationViewer', () => {
                 set: () => {},
                 has: () => {},
                 get: () => {},
-                unset: () => {}
+                unset: () => {},
             },
             container: containerEl,
             file: {
-                extension: 'ppt'
-            }
+                extension: 'ppt',
+            },
         });
 
         Object.defineProperty(BaseViewer.prototype, 'setup', { value: sandbox.mock() });
@@ -44,11 +42,11 @@ describe('lib/viewers/doc/PresentationViewer', () => {
         presentation.pdfViewer = {
             currentPageNumber: 1,
             update: sandbox.stub(),
-            cleanup: sandbox.stub()
+            cleanup: sandbox.stub(),
         };
 
         presentation.controls = {
-            add: sandbox.stub()
+            add: sandbox.stub(),
         };
     });
 
@@ -73,17 +71,14 @@ describe('lib/viewers/doc/PresentationViewer', () => {
             expect(presentation.preloader).to.be.instanceof(PresentationPreloader);
         });
 
-        it('should set logger to be preloaded and reset load timeout when preload event is received', () => {
+        it('should invoke onPreload callback', () => {
             presentation.options.logger = {
-                setPreloaded: sandbox.stub()
+                setPreloaded: sandbox.stub(),
             };
             stubs.setPreloaded = presentation.options.logger.setPreloaded;
-            stubs.resetLoadTimeout = sandbox.stub(presentation, 'resetLoadTimeout');
-
             presentation.preloader.emit('preload');
 
             expect(stubs.setPreloaded).to.be.called;
-            expect(stubs.resetLoadTimeout).to.be.called;
         });
     });
 
@@ -97,7 +92,7 @@ describe('lib/viewers/doc/PresentationViewer', () => {
         it('should remove listeners from preloader', () => {
             Object.defineProperty(DocBaseViewer.prototype, 'destroy', { value: sandbox.stub() });
             presentation.preloader = {
-                removeAllListeners: sandbox.mock().withArgs('preload')
+                removeAllListeners: sandbox.mock().withArgs('preload'),
             };
             presentation.destroy();
             presentation = null; // Don't call destroy again during cleanup
@@ -176,7 +171,7 @@ describe('lib/viewers/doc/PresentationViewer', () => {
             expect(stubs.nextPage).to.be.called;
         });
 
-        it('should fallback to doc base\'s onKeydown if no entry matches', () => {
+        it("should fallback to doc base's onKeydown if no entry matches", () => {
             const docBaseSpy = sandbox.spy(DocBaseViewer.prototype, 'onKeydown');
             const eventStub = sandbox.stub();
 
@@ -296,52 +291,6 @@ describe('lib/viewers/doc/PresentationViewer', () => {
         });
     });
 
-    describe('bindControlListeners()', () => {
-        beforeEach(() => {
-            presentation.pdfViewer = {
-                pagesCount: 4,
-                currentPageNumber: 1,
-                cleanup: sandbox.stub()
-            };
-
-            presentation.pageControls = {
-                add: sandbox.stub(),
-                removeListener: sandbox.stub()
-            };
-        });
-
-        it('should add the correct controls', () => {
-            presentation.bindControlListeners();
-            expect(presentation.controls.add).to.be.calledWith(
-                __('zoom_out'),
-                presentation.zoomOut,
-                'bp-exit-zoom-out-icon',
-                ICON_ZOOM_OUT
-            );
-            expect(presentation.controls.add).to.be.calledWith(
-                __('zoom_in'),
-                presentation.zoomIn,
-                'bp-enter-zoom-in-icon',
-                ICON_ZOOM_IN
-            );
-
-            expect(presentation.pageControls.add).to.be.calledWith(1, 4);
-
-            expect(presentation.controls.add).to.be.calledWith(
-                __('enter_fullscreen'),
-                presentation.toggleFullscreen,
-                'bp-enter-fullscreen-icon',
-                ICON_FULLSCREEN_IN
-            );
-            expect(presentation.controls.add).to.be.calledWith(
-                __('exit_fullscreen'),
-                presentation.toggleFullscreen,
-                'bp-exit-fullscreen-icon',
-                ICON_FULLSCREEN_OUT
-            );
-        });
-    });
-
     describe('mobileScrollHandler()', () => {
         beforeEach(() => {
             stubs.checkOverflow = sandbox.stub(presentation, 'checkOverflow').returns(false);
@@ -350,11 +299,11 @@ describe('lib/viewers/doc/PresentationViewer', () => {
                 changedTouches: [
                     {
                         clientX: 0,
-                        clientY: 0
-                    }
+                        clientY: 0,
+                    },
                 ],
                 touches: [1],
-                preventDefault: sandbox.stub()
+                preventDefault: sandbox.stub(),
             };
             stubs.nextPage = sandbox.stub(presentation, 'nextPage');
             stubs.previousPage = sandbox.stub(presentation, 'previousPage');
@@ -462,7 +411,7 @@ describe('lib/viewers/doc/PresentationViewer', () => {
             stubs.checkOverflow = sandbox.stub(presentation, 'checkOverflow').returns(false);
             presentation.event = {
                 deltaY: 5,
-                deltaX: -0
+                deltaX: -0,
             };
             wheelHandler = presentation.getWheelHandler();
         });
@@ -494,17 +443,32 @@ describe('lib/viewers/doc/PresentationViewer', () => {
     });
 
     describe('overwritePdfViewerBehavior()', () => {
-        it('should overwrite the scrollPageIntoView method', () => {
-            const setPageStub = sandbox.stub(presentation, 'setPage');
-            const page = {
-                pageNumber: 3
-            };
-            Object.defineProperty(DocBaseViewer.prototype, 'initViewer', { value: sandbox.stub() });
+        describe('should overwrite the scrollPageIntoView method', () => {
+            it('should do nothing if the viewer is not loaded', () => {
+                const setPageStub = sandbox.stub(presentation, 'setPage');
+                const page = {
+                    pageNumber: 3,
+                };
 
-            presentation.overwritePdfViewerBehavior();
-            presentation.pdfViewer.scrollPageIntoView(page);
+                presentation.loaded = false;
+                presentation.overwritePdfViewerBehavior();
+                presentation.pdfViewer.scrollPageIntoView(page);
 
-            expect(setPageStub).to.be.calledWith(page.pageNumber);
+                expect(setPageStub).to.not.be.called;
+            });
+
+            it('should change the page if the viewer is loaded', () => {
+                const setPageStub = sandbox.stub(presentation, 'setPage');
+                const page = {
+                    pageNumber: 3,
+                };
+
+                presentation.loaded = true;
+                presentation.overwritePdfViewerBehavior();
+                presentation.pdfViewer.scrollPageIntoView(page);
+
+                expect(setPageStub).to.be.calledWith(3);
+            });
         });
 
         it('should overwrite the _getVisiblePages method', () => {
@@ -512,10 +476,10 @@ describe('lib/viewers/doc/PresentationViewer', () => {
                 _pages: {
                     0: {
                         id: 1,
-                        view: 'pageObj'
-                    }
+                        view: 'pageObj',
+                    },
                 },
-                _currentPageNumber: 1
+                _currentPageNumber: 1,
             };
 
             presentation.overwritePdfViewerBehavior();

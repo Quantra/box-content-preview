@@ -2,10 +2,10 @@ import './Text.scss';
 import TextBaseViewer from './TextBaseViewer';
 import Browser from '../../Browser';
 import Popup from '../../Popup';
-import { CLASS_HIDDEN, TEXT_STATIC_ASSETS_VERSION } from '../../constants';
+import { BROWSERS, CLASS_HIDDEN, CLASS_IS_SCROLLABLE, TEXT_STATIC_ASSETS_VERSION } from '../../constants';
 import { ICON_PRINT_CHECKMARK } from '../../icons/icons';
 import { HIGHLIGHTTABLE_EXTENSIONS } from '../../extensions';
-import { get, openContentInsideIframe, createAssetUrlCreator, createStylesheet } from '../../util';
+import { openContentInsideIframe, createAssetUrlCreator, createStylesheet } from '../../util';
 import { VIEWER_EVENT } from '../../events';
 
 // Inline web worker JS
@@ -46,7 +46,6 @@ class PlainTextViewer extends TextBaseViewer {
      * @return {Promise} to load text representation and assets
      */
     load() {
-        this.setup();
         super.load();
 
         const loadAssetsPromise = this.loadAssets(this.getJS(), this.getCSS());
@@ -70,7 +69,7 @@ class PlainTextViewer extends TextBaseViewer {
         const { representation } = this.options;
         if (content && this.isRepresentationReady(representation)) {
             const template = representation.content.url_template;
-            get(this.createContentUrlWithAuthParams(template), 'any');
+            this.api.get(this.createContentUrlWithAuthParams(template), { type: 'document' });
         }
     }
 
@@ -105,15 +104,19 @@ class PlainTextViewer extends TextBaseViewer {
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() first to set up common layout
         super.setup();
 
-        this.textEl = this.containerEl.appendChild(document.createElement('pre'));
-        this.textEl.className = 'bp-text bp-text-plain hljs';
-        this.textEl.classList.add(CLASS_HIDDEN);
+        this.textEl = this.createViewer(document.createElement('pre'));
+        this.textEl.className = `bp-text bp-text-plain hljs ${CLASS_IS_SCROLLABLE} ${CLASS_HIDDEN}`;
+        this.textEl.tabIndex = '0';
 
         this.codeEl = this.textEl.appendChild(document.createElement('code'));
-        this.codeEl.classList.add(this.options.file.extension);
+        this.codeEl.className = `bp-text-code ${this.options.file.extension}`;
 
         // Whether or not we truncated text shown due to performance issues
         this.truncated = false;
@@ -194,11 +197,12 @@ class PlainTextViewer extends TextBaseViewer {
 
         const contentUrl = this.createContentUrlWithAuthParams(template);
         this.startLoadTimer();
-        return get(contentUrl, headers, 'text')
-            .catch((error) => {
+        return this.api
+            .get(contentUrl, { headers, type: 'text' })
+            .catch(error => {
                 this.handleDownloadError(error, contentUrl);
             })
-            .then((text) => {
+            .then(text => {
                 if (this.isDestroyed()) {
                     return;
                 }
@@ -227,13 +231,13 @@ class PlainTextViewer extends TextBaseViewer {
      */
     initHighlightJs(text) {
         const workerBlob = new Blob([HIGHLIGHT_WORKER_JS], {
-            type: 'application/javascript'
+            type: 'application/javascript',
         });
         this.workerSrc = URL.createObjectURL(workerBlob);
         const worker = new Worker(this.workerSrc);
 
         // Once highlighting is done, replace content and finish loading
-        worker.onmessage = (event) => {
+        worker.onmessage = event => {
             this.finishLoading(event.data, true);
         };
 
@@ -242,7 +246,7 @@ class PlainTextViewer extends TextBaseViewer {
         const highlightSrc = assetUrlCreator(`third-party/text/${TEXT_STATIC_ASSETS_VERSION}/highlight.min.js`);
         worker.postMessage({
             highlightSrc,
-            text
+            text,
         });
     }
 
@@ -253,7 +257,7 @@ class PlainTextViewer extends TextBaseViewer {
      * @return {void}
      */
     initPrint() {
-        this.printPopup = new Popup(this.containerEl);
+        this.printPopup = new Popup(this.rootEl);
 
         const printCheckmark = document.createElement('div');
         printCheckmark.className = `bp-print-check ${CLASS_HIDDEN}`;
@@ -285,7 +289,7 @@ class PlainTextViewer extends TextBaseViewer {
     preparePrint(stylesheets) {
         const assetUrlCreator = createAssetUrlCreator(this.options.location);
         this.printframe = openContentInsideIframe(this.textEl.outerHTML);
-        stylesheets.forEach((stylesheet) => {
+        stylesheets.forEach(stylesheet => {
             this.printframe.contentDocument.head.appendChild(createStylesheet(assetUrlCreator(stylesheet)));
         });
 
@@ -310,7 +314,7 @@ class PlainTextViewer extends TextBaseViewer {
      */
     printIframe() {
         this.printframe.contentWindow.focus();
-        if (Browser.getName() === 'Explorer' || Browser.getName() === 'Edge') {
+        if (Browser.getName() === BROWSERS.INTERNET_EXPLORER || Browser.getName() === BROWSERS.EDGE) {
             this.printframe.contentWindow.document.execCommand('print', false, null);
         } else {
             this.printframe.contentWindow.print();

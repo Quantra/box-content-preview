@@ -1,12 +1,12 @@
-import Controls from '../../Controls';
 import BaseViewer from '../BaseViewer';
 import Browser from '../../Browser';
+import Controls from '../../Controls';
 import PreviewError from '../../PreviewError';
-import { ICON_ZOOM_IN, ICON_ZOOM_OUT } from '../../icons/icons';
-import { get } from '../../util';
+import ZoomControls from '../../ZoomControls';
 
-import { CLASS_INVISIBLE } from '../../constants';
+import { BROWSERS, CLASS_INVISIBLE } from '../../constants';
 import { ERROR_CODE, VIEWER_EVENT } from '../../events';
+import { openContentInsideIframe } from '../../util';
 
 const CSS_CLASS_PANNING = 'panning';
 const CSS_CLASS_ZOOMABLE = 'zoomable';
@@ -16,6 +16,10 @@ class ImageBaseViewer extends BaseViewer {
     /** @inheritdoc */
     constructor(options) {
         super(options);
+
+        if (options.api) {
+            this.api = options.api;
+        }
 
         // Explicit event handler bindings
         this.pan = this.pan.bind(this);
@@ -73,8 +77,8 @@ class ImageBaseViewer extends BaseViewer {
 
         const loadOriginalDimensions = this.setOriginalImageSize(this.imageEl);
         loadOriginalDimensions.then(() => {
-            this.loadUI();
             this.zoom();
+            this.loadUI();
 
             this.imageEl.classList.remove(CLASS_INVISIBLE);
             this.loaded = true;
@@ -195,7 +199,8 @@ class ImageBaseViewer extends BaseViewer {
      */
     loadUI() {
         this.controls = new Controls(this.containerEl);
-        this.bindControlListeners();
+        this.zoomControls = new ZoomControls(this.controls);
+        this.zoomControls.init(this.scale, { onZoomIn: this.zoomIn, onZoomOut: this.zoomOut });
     }
 
     /**
@@ -207,24 +212,22 @@ class ImageBaseViewer extends BaseViewer {
      * @return {Promise} A promise that is resolved if the original image dimensions were set.
      */
     setOriginalImageSize(imageEl) {
-        const promise = new Promise((resolve) => {
+        const promise = new Promise(resolve => {
             // Do not bother loading a new image when the natural size attributes exist
             if (imageEl.naturalWidth && imageEl.naturalHeight) {
                 imageEl.setAttribute('originalWidth', imageEl.naturalWidth);
                 imageEl.setAttribute('originalHeight', imageEl.naturalHeight);
                 resolve();
             } else {
-                // Case when natural dimensions are not assigned
+                // Case when natural dimensions are not assigned, such as with SVGs
                 // By default, assigned width and height in Chrome/Safari/Firefox will be 300x150.
                 // IE11 workaround. Dimensions only displayed if the image is attached to the document.
-                get(imageEl.src, {}, 'text')
-                    .then((imageAsText) => {
-                        const parser = new DOMParser();
-                        const svgEl = parser.parseFromString(imageAsText, 'image/svg+xml');
-
+                this.api
+                    .get(imageEl.src, { type: 'text' })
+                    .then(imageAsText => {
                         try {
-                            // Assume svgEl is an instanceof an SVG with a viewBox and preserveAspectRatio of meet
-                            // where the height is the limiting axis
+                            const parser = new DOMParser();
+                            const svgEl = parser.parseFromString(imageAsText, 'image/svg+xml'); // Can throw in IE11
                             const viewBox = svgEl.documentElement.getAttribute('viewBox');
                             const [, , w, h] = viewBox.split(' ');
                             const aspectRatio = h ? w / h : w;
@@ -248,17 +251,6 @@ class ImageBaseViewer extends BaseViewer {
     //--------------------------------------------------------------------------
     // Event Listeners
     //--------------------------------------------------------------------------
-
-    /**
-     * Bind event listeners for document controls
-     *
-     * @private
-     * @return {void}
-     */
-    bindControlListeners() {
-        this.controls.add(__('zoom_out'), this.zoomOut, 'bp-image-zoom-out-icon', ICON_ZOOM_OUT);
-        this.controls.add(__('zoom_in'), this.zoomIn, 'bp-image-zoom-in-icon', ICON_ZOOM_IN);
-    }
 
     /**
      * Binds DOM listeners for image viewers.
@@ -340,7 +332,8 @@ class ImageBaseViewer extends BaseViewer {
         if (key === 'Shift++') {
             this.zoomIn();
             return true;
-        } else if (key === 'Shift+_') {
+        }
+        if (key === 'Shift+_') {
             this.zoomOut();
             return true;
         }
@@ -362,7 +355,6 @@ class ImageBaseViewer extends BaseViewer {
         // If this is a CTRL or CMD click, then ignore
         if ((typeof button !== 'number' || button < 2) && !ctrlKey && !metaKey) {
             this.startPanning(clientX, clientY);
-            event.preventDefault();
         }
     }
 
@@ -386,7 +378,6 @@ class ImageBaseViewer extends BaseViewer {
                 // click mouse up. In that case reset the image size, mimicking single-click-unzoom.
                 this.zoom('reset');
             }
-            event.preventDefault();
         }
     }
 
@@ -429,6 +420,43 @@ class ImageBaseViewer extends BaseViewer {
         if (!this.isMobile) {
             this.updateCursor();
         }
+    }
+
+    /**
+     * Prints image using an an iframe.
+     *
+     * @return {void}
+     */
+    print() {
+        const browserName = Browser.getName();
+
+        /**
+         * Called async to ensure resource is loaded for print preview. Then removes listener to prevent
+         * multiple handlers.
+         *
+         * @return {void}
+         */
+        const defaultPrintHandler = () => {
+            if (browserName === BROWSERS.INTERNET_EXPLORER || browserName === BROWSERS.EDGE) {
+                this.printframe.contentWindow.document.execCommand('print', false, null);
+            } else {
+                this.printframe.contentWindow.print();
+            }
+
+            this.printframe.removeEventListener('load', defaultPrintHandler);
+            this.emit(VIEWER_EVENT.printSuccess);
+        };
+
+        this.printframe = openContentInsideIframe(this.imageEl.outerHTML);
+        this.printImages = this.printframe.contentDocument.querySelectorAll('img');
+
+        for (let i = 0; i < this.printImages.length; i += 1) {
+            this.printImages[i].setAttribute('style', 'display: block; margin: 0 auto; width: 100%');
+        }
+
+        this.printframe.contentWindow.focus();
+
+        this.printframe.addEventListener(VIEWER_EVENT.load, defaultPrintHandler);
     }
 
     //--------------------------------------------------------------------------

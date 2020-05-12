@@ -1,6 +1,7 @@
 /* eslint-disable no-unused-expressions */
 import React from 'react'; // eslint-disable-line no-unused-vars
 import createReactClass from 'create-react-class';
+import Api from '../../../api';
 import CSVViewer from '../CSVViewer';
 import TextBaseViewer from '../TextBaseViewer';
 import BaseViewer from '../../BaseViewer';
@@ -11,6 +12,7 @@ let containerEl;
 let options;
 let csv;
 const sandbox = sinon.sandbox.create();
+const stubs = {};
 
 describe('lib/viewers/text/CSVViewer', () => {
     const setupFunc = BaseViewer.prototype.setup;
@@ -22,16 +24,18 @@ describe('lib/viewers/text/CSVViewer', () => {
     beforeEach(() => {
         fixture.load('viewers/text/__tests__/CSVViewer-test.html');
         containerEl = document.querySelector('.container');
+        stubs.api = new Api();
         options = {
+            api: stubs.api,
             container: containerEl,
             file: {
-                id: 0
+                id: 0,
             },
             representation: {
                 content: {
-                    url_template: 'csvUrl{+asset_path}'
-                }
-            }
+                    url_template: 'csvUrl{+asset_path}',
+                },
+            },
         };
 
         csv = new CSVViewer(options);
@@ -82,9 +86,9 @@ describe('lib/viewers/text/CSVViewer', () => {
             Object.defineProperty(TextBaseViewer.prototype, 'load', { value: sandbox.mock() });
 
             sandbox
-                .mock(util)
+                .mock(stubs.api)
                 .expects('get')
-                .withArgs(workerUrl, 'blob')
+                .withArgs(workerUrl, { type: 'blob' })
                 .returns(Promise.resolve(blob));
 
             return csv.load().then(() => {
@@ -101,7 +105,7 @@ describe('lib/viewers/text/CSVViewer', () => {
             csv.options.sharedLink = 'sharedLink';
             csv.options.sharedLinkPassword = 'sharedLinkPassword';
 
-            sandbox.stub(util, 'get').returns(Promise.resolve());
+            sandbox.stub(stubs.api, 'get').returns(Promise.resolve());
 
             const csvUrlWithAuth = `csvUrl/?access_token=token&shared_link=sharedLink&shared_link_password=sharedLinkPassword&box_client_name=${__NAME__}&box_client_version=${__VERSION__}`;
 
@@ -109,7 +113,7 @@ describe('lib/viewers/text/CSVViewer', () => {
                 expect(window.Papa.parse).to.be.calledWith(csvUrlWithAuth, {
                     download: true,
                     error: sinon.match.func,
-                    complete: sinon.match.func
+                    complete: sinon.match.func,
                 });
             });
         });
@@ -121,7 +125,7 @@ describe('lib/viewers/text/CSVViewer', () => {
             csv.options.token = 'token';
             csv.options.sharedLink = 'sharedLink';
             csv.options.sharedLinkPassword = 'sharedLinkPassword';
-            sandbox.stub(util, 'get').returns(Promise.resolve());
+            sandbox.stub(stubs.api, 'get').returns(Promise.resolve());
             sandbox.stub(csv, 'startLoadTimer');
 
             return csv.load().then(() => {
@@ -142,9 +146,9 @@ describe('lib/viewers/text/CSVViewer', () => {
             sandbox.stub(csv, 'createContentUrlWithAuthParams').returns(contentUrl);
             sandbox.stub(csv, 'isRepresentationReady').returns(true);
             sandbox
-                .mock(util)
+                .mock(stubs.api)
                 .expects('get')
-                .withArgs(contentUrl, 'any');
+                .withArgs(contentUrl, { type: 'document' });
 
             csv.prefetch({ assets: false, content: true });
         });
@@ -152,7 +156,7 @@ describe('lib/viewers/text/CSVViewer', () => {
         it('should not prefetch content if content is true but representation is not ready', () => {
             sandbox.stub(csv, 'isRepresentationReady').returns(false);
             sandbox
-                .mock(util)
+                .mock(stubs.api)
                 .expects('get')
                 .never();
             csv.prefetch({ assets: false, content: true });
@@ -170,7 +174,7 @@ describe('lib/viewers/text/CSVViewer', () => {
             Object.defineProperty(TextBaseViewer.prototype, 'resize', { value: sandbox.mock() });
             csv.csvComponent = {
                 renderCSV: sandbox.mock(),
-                destroy: sandbox.stub()
+                destroy: sandbox.stub(),
             };
 
             csv.resize();
@@ -185,7 +189,7 @@ describe('lib/viewers/text/CSVViewer', () => {
                 renderCSV: sandbox.mock(),
                 render: () => {
                     return '';
-                }
+                },
             });
             /* eslint-enable react/prefer-es6-class */
             sandbox.stub(csv, 'loadUI');
@@ -196,6 +200,57 @@ describe('lib/viewers/text/CSVViewer', () => {
             expect(csv.loadUI).to.be.called;
             expect(csv.loaded).to.be.true;
             expect(csv.emit).to.be.calledWith(VIEWER_EVENT.load);
+        });
+    });
+
+    describe('checkForParseErrors()', () => {
+        beforeEach(() => {
+            stubs.getWorstParseError = sandbox.stub(csv, 'getWorstParseError');
+            stubs.triggerError = sandbox.stub(csv, 'triggerError');
+        });
+
+        it('should do nothing if no errors', () => {
+            csv.checkForParseErrors();
+
+            expect(stubs.triggerError).not.to.be.called;
+        });
+
+        it('should trigger error with a parse error', () => {
+            stubs.getWorstParseError.returns({ foo: 'bar' });
+
+            csv.checkForParseErrors({ errors: [{ foo: 'bar' }] });
+
+            expect(stubs.triggerError).to.be.called;
+        });
+    });
+
+    describe('getWorstParseError()', () => {
+        const delimiterError = { type: 'Delimiter' };
+        const fieldsMismatchError = { type: 'FieldMismatch', id: 1 };
+        const fieldsMismatchError2 = { type: 'FieldMismatch', id: 2 };
+        const quotesError = { type: 'Quotes' };
+
+        [
+            { name: 'should return undefined if empty array', errors: [], expectedError: undefined },
+            {
+                name: 'should return delimiter type if present',
+                errors: [fieldsMismatchError, delimiterError, quotesError],
+                expectedError: delimiterError,
+            },
+            {
+                name: 'should return quotes type if no delimiter type in array',
+                errors: [fieldsMismatchError, quotesError],
+                expectedError: quotesError,
+            },
+            {
+                name: 'should return fields mismatch type if no other type present',
+                errors: [fieldsMismatchError, fieldsMismatchError2],
+                expectedError: fieldsMismatchError,
+            },
+        ].forEach(({ name, errors, expectedError }) => {
+            it(`${name}`, () => {
+                expect(csv.getWorstParseError(errors)).to.be.eql(expectedError);
+            });
         });
     });
 });

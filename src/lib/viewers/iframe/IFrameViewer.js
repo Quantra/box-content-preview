@@ -6,10 +6,14 @@ class IFrameViewer extends BaseViewer {
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() to set up common layout
         super.setup();
 
-        this.iframeEl = this.containerEl.appendChild(document.createElement('iframe'));
+        this.iframeEl = this.createViewer(document.createElement('iframe'));
         this.iframeEl.setAttribute('width', '100%');
         this.iframeEl.setAttribute('height', '100%');
         this.iframeEl.setAttribute('frameborder', 0);
@@ -23,8 +27,6 @@ class IFrameViewer extends BaseViewer {
      * @return {void}
      */
     load() {
-        this.setup();
-
         let src = '';
         const { file, sharedLink = '', appHost } = this.options;
         const { extension } = file;

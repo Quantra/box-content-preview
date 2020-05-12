@@ -2,11 +2,13 @@
 import MultiImageViewer from '../MultiImageViewer';
 import PageControls from '../../../PageControls';
 import fullscreen from '../../../Fullscreen';
+import { CLASS_MULTI_IMAGE_PAGE } from '../../../constants';
 import BaseViewer from '../../BaseViewer';
 import ImageBaseViewer from '../ImageBaseViewer';
 import Browser from '../../../Browser';
 import * as util from '../../../util';
 import { ICON_FULLSCREEN_IN, ICON_FULLSCREEN_OUT } from '../../../icons/icons';
+import ZoomControls from '../../../ZoomControls';
 
 const CLASS_INVISIBLE = 'bp-is-invisible';
 
@@ -33,39 +35,40 @@ describe('lib/viewers/image/MultiImageViewer', () => {
         stubs.emit = sandbox.stub(fullscreen, 'addListener');
         options = {
             file: {
-                id: 100
+                id: 100,
             },
             viewerAsset: '{page}.png',
             viewer: {
-                ASSET: '{page}.png'
+                ASSET: '{page}.png',
             },
             container: containerEl,
             representation: {
                 content: {
-                    url_template: 'link'
+                    url_template: 'link',
                 },
                 metadata: {
-                    pages: 3
-                }
-            }
+                    pages: 3,
+                },
+            },
         };
 
         stubs.singleImageEl = {
             src: undefined,
             setAttribute: sandbox.stub(),
             classList: {
-                add: sandbox.stub()
+                add: sandbox.stub(),
             },
-            scrollIntoView: sandbox.stub()
+            scrollIntoView: sandbox.stub(),
         };
 
         multiImage = new MultiImageViewer(options);
 
         Object.defineProperty(BaseViewer.prototype, 'setup', { value: sandbox.stub() });
         Object.defineProperty(ImageBaseViewer.prototype, 'setOriginalImageSize', {
-            value: sandbox.stub().returns(Promise.resolve())
+            value: sandbox.stub().returns(Promise.resolve()),
         });
         multiImage.containerEl = containerEl;
+        multiImage.setup();
     });
 
     afterEach(() => {
@@ -94,8 +97,8 @@ describe('lib/viewers/image/MultiImageViewer', () => {
             stubs.unbindDOMListeners = sandbox.stub(multiImage, 'unbindDOMListeners');
             multiImage.singleImageEls = [
                 {
-                    removeEventListener: sandbox.stub()
-                }
+                    removeEventListener: sandbox.stub(),
+                },
             ];
         });
 
@@ -120,7 +123,7 @@ describe('lib/viewers/image/MultiImageViewer', () => {
             stubs.bindImageListeners = sandbox.stub(multiImage, 'bindImageListeners');
             stubs.setupImageEls = sandbox.stub(multiImage, 'setupImageEls');
             multiImage.wrapperEl = {
-                addEventListener: sandbox.stub()
+                addEventListener: sandbox.stub(),
             };
             stubs.addWrapperListener = multiImage.wrapperEl.addEventListener;
         });
@@ -155,7 +158,7 @@ describe('lib/viewers/image/MultiImageViewer', () => {
                 .catch(() => {});
         });
 
-        it('should make the images invisible', () => {
+        it('should ensure load timer is started', () => {
             sandbox.stub(multiImage, 'startLoadTimer');
             return multiImage
                 .load('file/100/content/{page}.png')
@@ -176,13 +179,13 @@ describe('lib/viewers/image/MultiImageViewer', () => {
             multiImage.options = {
                 viewerAsset: '{asset_path}',
                 viewer: {
-                    ASSET: '{page}.png'
+                    ASSET: '{page}.png',
                 },
                 representation: {
                     metadata: {
-                        pages: 3
-                    }
-                }
+                        pages: 3,
+                    },
+                },
             };
             const result2 = multiImage.constructImageUrls('file/100/content/{+asset_path}');
             expect(result2[0]).to.equal(firstURL);
@@ -226,23 +229,23 @@ describe('lib/viewers/image/MultiImageViewer', () => {
             multiImage.singleImageEls = [stubs.singleImageEl];
 
             multiImage.setupImageEls('file/100/content/{page}.png', 0);
-            expect(stubs.singleImageEl.classList.add).to.be.calledWith('page');
+            expect(stubs.singleImageEl.classList.add).to.be.calledWith(CLASS_MULTI_IMAGE_PAGE);
         });
     });
 
-    describe('setOriginalImageSize()', () => {
+    describe('setOriginalImageSizes()', () => {
         beforeEach(() => {
             multiImage.singleImageEls = [stubs.singleImageEl, stubs.singleImageEl, stubs.singleImageEl];
         });
 
         it('should return a promise', () => {
-            const promise = multiImage.setOriginalImageSize();
+            const promise = multiImage.setOriginalImageSizes();
             expect(promise).to.be.a('Promise');
         });
 
-        it('should return a promise that resolves after each image has a proper size', (done) => {
+        it('should return a promise that resolves after each image has a proper size', done => {
             // We've overridden super.setOriginalImageSize() to resolve immediately
-            multiImage.setOriginalImageSize().then(() => {
+            multiImage.setOriginalImageSizes().then(() => {
                 done();
             });
         });
@@ -321,30 +324,48 @@ describe('lib/viewers/image/MultiImageViewer', () => {
 
     describe('setScale()', () => {
         it('should set the scale relative to the size of the first image dimensions', () => {
+            multiImage.zoomControls = {
+                setCurrentScale: sandbox.stub(),
+                removeListener: sandbox.stub(),
+            };
+
             multiImage.singleImageEls = [
                 {
                     naturalWidth: 1024,
-                    naturalHeight: 1024
+                    naturalHeight: 1024,
                 },
                 {
-                    src: 'www.NotTheRightImage.net'
-                }
+                    src: 'www.NotTheRightImage.net',
+                },
             ];
             sandbox.stub(multiImage, 'emit');
 
             multiImage.setScale(512, 512);
             expect(multiImage.emit).to.be.calledWith('scale', { scale: 0.5 });
+            expect(multiImage.zoomControls.setCurrentScale).to.be.calledWith(0.5);
         });
     });
 
     describe('loadUI()', () => {
+        const zoomInitFunc = ZoomControls.prototype.init;
+
+        beforeEach(() => {
+            Object.defineProperty(ZoomControls.prototype, 'init', { value: sandbox.stub() });
+        });
+
+        afterEach(() => {
+            Object.defineProperty(ZoomControls.prototype, 'init', { value: zoomInitFunc });
+        });
+
         it('should create page controls and bind the page control listeners', () => {
             stubs.bindPageControlListeners = sandbox.stub(multiImage, 'bindPageControlListeners');
 
             multiImage.loadUI();
             expect(multiImage.pageControls instanceof PageControls).to.be.true;
             expect(multiImage.pageControls.contentEl).to.equal(multiImage.wrapperEl);
+            expect(multiImage.zoomControls instanceof ZoomControls).to.be.true;
             expect(stubs.bindPageControlListeners).to.be.called;
+            expect(ZoomControls.prototype.init).to.be.called;
         });
     });
 
@@ -354,11 +375,11 @@ describe('lib/viewers/image/MultiImageViewer', () => {
             multiImage.pagesCount = 10;
             multiImage.pageControls = {
                 add: sandbox.stub(),
-                addListener: sandbox.stub()
+                addListener: sandbox.stub(),
             };
 
             multiImage.controls = {
-                add: sandbox.stub()
+                add: sandbox.stub(),
             };
         });
 
@@ -376,13 +397,13 @@ describe('lib/viewers/image/MultiImageViewer', () => {
                 __('enter_fullscreen'),
                 multiImage.toggleFullscreen,
                 'bp-enter-fullscreen-icon',
-                ICON_FULLSCREEN_IN
+                ICON_FULLSCREEN_IN,
             );
             expect(multiImage.controls.add).to.be.calledWith(
                 __('exit_fullscreen'),
                 multiImage.toggleFullscreen,
                 'bp-exit-fullscreen-icon',
-                ICON_FULLSCREEN_OUT
+                ICON_FULLSCREEN_OUT,
             );
         });
     });
@@ -391,11 +412,11 @@ describe('lib/viewers/image/MultiImageViewer', () => {
         beforeEach(() => {
             multiImage.singleImageEls = [
                 {
-                    src: 'foo'
+                    src: 'foo',
                 },
                 {
-                    src: 'baz'
-                }
+                    src: 'baz',
+                },
             ];
 
             sandbox.stub(multiImage, 'handleDownloadError');
@@ -417,11 +438,11 @@ describe('lib/viewers/image/MultiImageViewer', () => {
         beforeEach(() => {
             multiImage.singleImageEls = [
                 {
-                    addEventListener: sandbox.stub()
+                    addEventListener: sandbox.stub(),
                 },
                 {
-                    addEventListener: sandbox.stub()
-                }
+                    addEventListener: sandbox.stub(),
+                },
             ];
         });
 
@@ -440,11 +461,11 @@ describe('lib/viewers/image/MultiImageViewer', () => {
         beforeEach(() => {
             multiImage.singleImageEls = [
                 {
-                    removeEventListener: sandbox.stub()
+                    removeEventListener: sandbox.stub(),
                 },
                 {
-                    removeEventListener: sandbox.stub()
-                }
+                    removeEventListener: sandbox.stub(),
+                },
             ];
         });
 
@@ -491,7 +512,7 @@ describe('lib/viewers/image/MultiImageViewer', () => {
         beforeEach(() => {
             stubs.isValidPageChange = sandbox.stub(multiImage, 'isValidPageChange');
             multiImage.pageControls = {
-                updateCurrentPage: sandbox.stub()
+                updateCurrentPage: sandbox.stub(),
             };
 
             stubs.emit = sandbox.stub(multiImage, 'emit');
@@ -583,7 +604,7 @@ describe('lib/viewers/image/MultiImageViewer', () => {
             stubs.singleImageEls = multiImage.singleImageEls;
 
             multiImage.wrapperEl = {
-                scrollTop: 100
+                scrollTop: 100,
             };
             stubs.wrapperEl = multiImage.wrapperEl;
 

@@ -11,6 +11,10 @@ class Image360Viewer extends Box3DViewer {
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() to set up common layout
         super.setup();
 
@@ -27,7 +31,7 @@ class Image360Viewer extends Box3DViewer {
      */
     createSubModules() {
         this.controls = new Box3DControls(this.wrapperEl);
-        this.renderer = new Image360Renderer(this.wrapperEl, this.boxSdk);
+        this.renderer = new Image360Renderer(this.wrapperEl, this.boxSdk, { api: this.api });
     }
 }
 

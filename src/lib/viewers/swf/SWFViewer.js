@@ -9,7 +9,7 @@ const SWF_PARAMS = {
     allowNetworking: 'none',
     allowscriptaccess: 'never',
     allowScriptAccess: 'never',
-    wmode: 'transparent'
+    wmode: 'transparent',
 };
 
 const JS = [`third-party/swf/${SWF_STATIC_ASSETS_VERSION}/swfobject.js`];
@@ -19,9 +19,13 @@ class SWFViewer extends BaseViewer {
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() to set up common layout
         super.setup();
-        this.playerEl = this.containerEl.appendChild(document.createElement('div'));
+        this.playerEl = this.createViewer(document.createElement('div'));
         this.playerEl.id = 'flash-player';
     }
 
@@ -32,7 +36,6 @@ class SWFViewer extends BaseViewer {
      * @return {void}
      */
     load() {
-        this.setup();
         super.load();
         return this.loadAssets(JS)
             .then(this.postLoad)
@@ -68,7 +71,7 @@ class SWFViewer extends BaseViewer {
                 }
                 this.loaded = true;
                 this.emit(VIEWER_EVENT.load);
-            }
+            },
         );
     };
 

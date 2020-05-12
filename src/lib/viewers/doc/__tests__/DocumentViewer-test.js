@@ -4,7 +4,6 @@ import DocBaseViewer from '../DocBaseViewer';
 import BaseViewer from '../../BaseViewer';
 import DocPreloader from '../DocPreloader';
 import fullscreen from '../../../Fullscreen';
-import { ICON_FULLSCREEN_IN, ICON_FULLSCREEN_OUT, ICON_ZOOM_IN, ICON_ZOOM_OUT } from '../../../icons/icons';
 
 const sandbox = sinon.sandbox.create();
 
@@ -26,8 +25,8 @@ describe('lib/viewers/doc/DocumentViewer', () => {
         doc = new DocumentViewer({
             container: containerEl,
             file: {
-                id: '0'
-            }
+                id: '0',
+            },
         });
 
         Object.defineProperty(BaseViewer.prototype, 'setup', { value: sandbox.mock() });
@@ -36,10 +35,10 @@ describe('lib/viewers/doc/DocumentViewer', () => {
 
         doc.pdfViewer = {
             currentPageNumber: 0,
-            cleanup: sandbox.stub()
+            cleanup: sandbox.stub(),
         };
         doc.controls = {
-            add: sandbox.stub()
+            add: sandbox.stub(),
         };
     });
 
@@ -63,17 +62,14 @@ describe('lib/viewers/doc/DocumentViewer', () => {
             expect(doc.preloader).to.be.instanceof(DocPreloader);
         });
 
-        it('should set logger to be preloaded and reset load timeout when preload event is received', () => {
+        it('should invoke onPreload callback', () => {
             doc.options.logger = {
-                setPreloaded: sandbox.stub()
+                setPreloaded: sandbox.stub(),
             };
             stubs.setPreloaded = doc.options.logger.setPreloaded;
-            stubs.resetLoadTimeout = sandbox.stub(doc, 'resetLoadTimeout');
-
             doc.preloader.emit('preload');
 
             expect(stubs.setPreloaded).to.be.called;
-            expect(stubs.resetLoadTimeout).to.be.called;
         });
     });
 
@@ -87,7 +83,7 @@ describe('lib/viewers/doc/DocumentViewer', () => {
         it('should remove listeners from preloader', () => {
             Object.defineProperty(DocBaseViewer.prototype, 'destroy', { value: sandbox.stub() });
             doc.preloader = {
-                removeAllListeners: sandbox.mock().withArgs('preload')
+                removeAllListeners: sandbox.mock().withArgs('preload'),
             };
             doc.destroy();
             doc = null; // Don't call destroy again during cleanup
@@ -131,7 +127,7 @@ describe('lib/viewers/doc/DocumentViewer', () => {
             expect(stubs.nextPage).to.be.called;
         });
 
-        it('should fallback to doc base\'s onKeydown if no entry matches', () => {
+        it("should fallback to doc base's onKeydown if no entry matches", () => {
             const docbaseStub = sandbox.spy(DocBaseViewer.prototype, 'onKeydown');
             const eventStub = sandbox.stub();
             stubs.fullscreen.returns(false);
@@ -148,46 +144,6 @@ describe('lib/viewers/doc/DocumentViewer', () => {
             expect(result2).to.be.true;
 
             expect(docbaseStub).to.have.been.calledTwice;
-        });
-    });
-
-    describe('bindControlListeners()', () => {
-        beforeEach(() => {
-            doc.pdfViewer = {
-                pagesCount: 4,
-                cleanup: sandbox.stub()
-            };
-
-            doc.pageControls = {
-                add: sandbox.stub(),
-                removeListener: sandbox.stub()
-            };
-        });
-
-        it('should add the correct controls', () => {
-            doc.bindControlListeners();
-            expect(doc.controls.add).to.be.calledWith(
-                __('zoom_out'),
-                doc.zoomOut,
-                'bp-doc-zoom-out-icon',
-                ICON_ZOOM_OUT
-            );
-            expect(doc.controls.add).to.be.calledWith(__('zoom_in'), doc.zoomIn, 'bp-doc-zoom-in-icon', ICON_ZOOM_IN);
-
-            expect(doc.pageControls.add).to.be.called;
-
-            expect(doc.controls.add).to.be.calledWith(
-                __('enter_fullscreen'),
-                doc.toggleFullscreen,
-                'bp-enter-fullscreen-icon',
-                ICON_FULLSCREEN_IN
-            );
-            expect(doc.controls.add).to.be.calledWith(
-                __('exit_fullscreen'),
-                doc.toggleFullscreen,
-                'bp-exit-fullscreen-icon',
-                ICON_FULLSCREEN_OUT
-            );
         });
     });
 });

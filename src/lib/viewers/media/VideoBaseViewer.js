@@ -26,6 +26,10 @@ class VideoBaseViewer extends MediaBaseViewer {
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() to set up common layout
         super.setup();
 
@@ -219,8 +223,8 @@ class VideoBaseViewer extends MediaBaseViewer {
      * @return {void}
      */
     lowerLights() {
-        if (this.containerEl) {
-            this.containerEl.classList.add(CLASS_DARK);
+        if (this.rootEl) {
+            this.rootEl.classList.add(CLASS_DARK);
         }
     }
 
@@ -230,6 +234,16 @@ class VideoBaseViewer extends MediaBaseViewer {
     onKeydown(key) {
         return super.onKeydown(key);
     }
+
+    /**
+     * Auto-play was prevented, try muted play
+     *
+     * @override
+     */
+    handleAutoplayFail = () => {
+        this.setVolume(0);
+        this.play().catch(this.pause);
+    };
 }
 
 export default VideoBaseViewer;

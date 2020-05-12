@@ -24,7 +24,7 @@ if (typeof Object.assign != 'function') {
             }
 
             var output = Object(target);
-            for (var index = 1; index < arguments.length; index++) {
+            for (var index = 1; index < arguments.length; index += 1) {
                 var source = arguments[index];
                 if (source !== undefined && source !== null) {
                     for (var nextKey in source) {
@@ -83,7 +83,7 @@ if (!Array.prototype.find) {
 
             // 7. Return undefined.
             return undefined;
-        }
+        },
     });
 }
 
@@ -131,7 +131,7 @@ if (!Array.prototype.findIndex) {
 
             // 7. Return -1.
             return -1;
-        }
+        },
     });
 }
 
@@ -185,7 +185,7 @@ if (!Array.prototype.includes) {
 
             // 8. Return false
             return false;
-        }
+        },
     });
 }
 
@@ -207,7 +207,7 @@ if (!String.prototype.endsWith) {
             position -= searchString.length;
             var lastIndex = subjectString.indexOf(searchString, position);
             return lastIndex !== -1 && lastIndex === position;
-        }
+        },
     });
 }
 
@@ -253,7 +253,7 @@ Number.isNaN =
                     /* empty */
                 },
                 [],
-                F
+                F,
             ) instanceof F
         );
     });
@@ -297,7 +297,7 @@ Number.isNaN =
         Reflect.construct = construct;
     } else {
         Reflect = {
-            construct
+            construct,
         };
     }
 })();
@@ -390,6 +390,22 @@ if (!Array.from) {
 if (!String.prototype.startsWith) {
     String.prototype.startsWith = function(search, pos) {
         return this.substr(!pos || pos < 0 ? 0 : +pos, search.length) === search;
+    };
+}
+
+// NodeList.prototype.forEach polyfill for IE11
+// https://developer.mozilla.org/en-US/docs/Web/API/NodeList/forEach
+if (window.NodeList && !NodeList.prototype.forEach) {
+    NodeList.prototype.forEach = Array.prototype.forEach;
+}
+
+// PerformanceObserver no-op polyfill for IE11 and Edge (not supported)
+if (!window.PerformanceObserver) {
+    window.PerformanceObserver = function PerformanceObserverNoop() {
+        return {
+            disconnect: () => {},
+            observe: () => {},
+        };
     };
 }
 /* eslint-enable */

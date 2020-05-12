@@ -1,8 +1,10 @@
 import EventEmitter from 'events';
 import fullscreen from './Fullscreen';
 import Browser from './Browser';
+import { BROWSERS } from './constants';
 import { decodeKeydown } from './util';
 import { ICON_DROP_DOWN, ICON_DROP_UP } from './icons/icons';
+import { CLASS_BOX_CONTROLS_GROUP_BUTTON } from './Controls';
 
 const SHOW_PAGE_NUM_INPUT_CLASS = 'show-page-number-input';
 const CONTROLS_PAGE_NUM_WRAPPER_CLASS = 'bp-page-num-wrapper';
@@ -15,8 +17,8 @@ const NEXT_PAGE = 'bp-next-page';
 
 const pageNumTemplate = `
     <div class='${CONTROLS_PAGE_NUM_WRAPPER_CLASS}'>
-        <span class=${CONTROLS_CURRENT_PAGE}>1</span>
-        <input type='number' pattern='[0-9]*' min='1'  value='' size='3' class='${CONTROLS_PAGE_NUM_INPUT_CLASS}' />
+        <span class=${CONTROLS_CURRENT_PAGE} data-testid='current-page'>1</span>
+        <input type='number' pattern='[0-9]*' min='1'  value='' size='3' class='${CONTROLS_PAGE_NUM_INPUT_CLASS}' data-testid='page-num-input'/>
         <span class='bp-page-num-divider'>&nbsp;/&nbsp;</span>
         <span class='${CONTROLS_TOTAL_PAGES}'>1</span>
     </div>`.replace(/>\s*</g, '><');
@@ -39,6 +41,7 @@ class PageControls extends EventEmitter {
 
     /** @property {HTMLElement} - Page number input element */
     pageNumInputEl;
+
     /**
      * [constructor]
      *
@@ -70,14 +73,32 @@ class PageControls extends EventEmitter {
      * @return {void}
      */
     add(currentPageNumber, pagesCount) {
+        const groupElement = this.controls.addGroup();
+        // const groupElement = undefined;
         this.controls.add(
             __('previous_page'),
             this.setPreviousPage,
-            `bp-previous-page-icon ${PREV_PAGE}`,
-            ICON_DROP_UP
+            `${CLASS_BOX_CONTROLS_GROUP_BUTTON} bp-previous-page-icon ${PREV_PAGE}`,
+            ICON_DROP_UP,
+            undefined,
+            groupElement,
         );
-        this.controls.add(__('enter_page_num'), this.showPageNumInput, PAGE_NUM, pageNumTemplate);
-        this.controls.add(__('next_page'), this.setNextPage, `bp-next-page-icon ${NEXT_PAGE}`, ICON_DROP_DOWN);
+        this.controls.add(
+            __('enter_page_num'),
+            this.showPageNumInput,
+            PAGE_NUM,
+            pageNumTemplate,
+            undefined,
+            groupElement,
+        );
+        this.controls.add(
+            __('next_page'),
+            this.setNextPage,
+            `${CLASS_BOX_CONTROLS_GROUP_BUTTON} bp-next-page-icon ${NEXT_PAGE}`,
+            ICON_DROP_DOWN,
+            undefined,
+            groupElement,
+        );
 
         const pageNumEl = this.controlsEl.querySelector(`.${PAGE_NUM}`);
         this.totalPagesEl = pageNumEl.querySelector(`.${CONTROLS_TOTAL_PAGES}`);
@@ -132,7 +153,7 @@ class PageControls extends EventEmitter {
         const nextPageButtonEl = this.controlsEl.querySelector(`.${NEXT_PAGE}`);
 
         // Safari disables keyboard input in fullscreen before Safari 10.1
-        const isSafariFullscreen = Browser.getName() === 'Safari' && fullscreen.isFullscreen(this.controlsEl);
+        const isSafariFullscreen = Browser.getName() === 'Safari' && fullscreen.isFullscreen();
 
         // Disable page number selector if there is only one page or less
         if (pageNumButtonEl) {
@@ -270,7 +291,7 @@ class PageControls extends EventEmitter {
                 // we blur the page behind the controls - this unfortunately
                 // is an IE-only solution that doesn't work with other browsers
 
-                if (Browser.getName() !== 'Explorer') {
+                if (Browser.getName() !== BROWSERS.INTERNET_EXPLORER) {
                     event.target.blur();
                 }
 

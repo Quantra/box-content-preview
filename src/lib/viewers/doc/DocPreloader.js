@@ -1,19 +1,20 @@
 import EventEmitter from 'events';
+import Api from '../../api';
 import {
     CLASS_BOX_PREVIEW_PRELOAD,
     CLASS_BOX_PREVIEW_PRELOAD_CONTENT,
     CLASS_BOX_PREVIEW_PRELOAD_OVERLAY,
+    CLASS_BOX_PREVIEW_PRELOAD_SPINNER,
     CLASS_BOX_PREVIEW_PRELOAD_WRAPPER_DOCUMENT,
     CLASS_INVISIBLE,
     CLASS_IS_TRANSPARENT,
     CLASS_PREVIEW_LOADED,
-    CLASS_SPINNER,
     PDFJS_CSS_UNITS,
     PDFJS_MAX_AUTO_SCALE,
     PDFJS_WIDTH_PADDING_PX,
-    PDFJS_HEIGHT_PADDING_PX
+    PDFJS_HEIGHT_PADDING_PX,
 } from '../../constants';
-import { get, setDimensions } from '../../util';
+import { setDimensions, handleRepresentationBlobFetch } from '../../util';
 
 const EXIF_COMMENT_TAG_NAME = 'UserComment'; // Read EXIF data from 'UserComment' tag
 const EXIF_COMMENT_REGEX = /pdfWidth:([0-9.]+)pts,pdfHeight:([0-9.]+)pts,numPages:([0-9]+)/;
@@ -23,9 +24,12 @@ const NUM_PAGES_MAX = 500; // Don't show more than 500 placeholder pages
 
 const ACCEPTABLE_RATIO_DIFFERENCE = 0.025; // Acceptable difference in ratio of PDF dimensions to image dimensions
 
-const SPINNER_HTML = `<div class="${CLASS_SPINNER}"><div></div></div>`;
+const SPINNER_HTML = `<div class="${CLASS_BOX_PREVIEW_PRELOAD_SPINNER}"></div>`;
 
 class DocPreloader extends EventEmitter {
+    /** @property {Api} - Api layer used for XHR calls */
+    api = new Api();
+
     /** @property {HTMLElement} - Viewer container */
     containerEl;
 
@@ -37,6 +41,9 @@ class DocPreloader extends EventEmitter {
 
     /** @property {HTMLElement} - Preload overlay element */
     overlayEl;
+
+    /** @property {Object} - The EXIF data for the PDF */
+    pdfData;
 
     /** @property {HTMLElement} - Preload container element */
     preloadEl;
@@ -57,10 +64,13 @@ class DocPreloader extends EventEmitter {
      * [constructor]
      *
      * @param {PreviewUI} previewUI - UI instance
+     * @param {Object} options - Preloader options
+     * @param {Api} options.api - API Instance
      * @return {DocPreloader} DocPreloader instance
      */
-    constructor(previewUI) {
+    constructor(previewUI, { api } = {}) {
         super();
+        this.api = api;
         this.previewUI = previewUI;
         this.wrapperClassName = CLASS_BOX_PREVIEW_PRELOAD_WRAPPER_DOCUMENT;
     }
@@ -70,23 +80,26 @@ class DocPreloader extends EventEmitter {
      * while the full document loads to give the user visual feedback on the file as soon as possible.
      *
      * @param {string} preloadUrlWithAuth - URL for preload content with authorization query params
-     * @param {HTMLElement} containerEl - Viewer container to render preload in
      * @return {Promise} Promise to show preload
      */
     showPreload(preloadUrlWithAuth, containerEl) {
         this.containerEl = containerEl;
 
         // Need to load image as a blob to read EXIF
-        return get(preloadUrlWithAuth, 'blob').then((imgBlob) => {
-            if (this.checkDocumentLoaded()) {
-                return;
-            }
 
-            this.srcUrl = URL.createObjectURL(imgBlob);
+        return this.api
+            .get(preloadUrlWithAuth, { type: 'blob' })
+            .then(handleRepresentationBlobFetch)
+            .then(imgBlob => {
+                if (this.checkDocumentLoaded()) {
+                    return;
+                }
 
-            this.wrapperEl = document.createElement('div');
-            this.wrapperEl.className = this.wrapperClassName;
-            this.wrapperEl.innerHTML = `
+                this.srcUrl = URL.createObjectURL(imgBlob);
+
+                this.wrapperEl = document.createElement('div');
+                this.wrapperEl.className = this.wrapperClassName;
+                this.wrapperEl.innerHTML = `
                 <div class="${CLASS_BOX_PREVIEW_PRELOAD} ${CLASS_INVISIBLE}">
                     <img class="${CLASS_BOX_PREVIEW_PRELOAD_CONTENT}" src="${this.srcUrl}" />
                     <div class="${CLASS_BOX_PREVIEW_PRELOAD_CONTENT} ${CLASS_BOX_PREVIEW_PRELOAD_OVERLAY}">
@@ -95,12 +108,12 @@ class DocPreloader extends EventEmitter {
                 </div>
             `.trim();
 
-            this.containerEl.appendChild(this.wrapperEl);
-            this.preloadEl = this.wrapperEl.querySelector(`.${CLASS_BOX_PREVIEW_PRELOAD}`);
-            this.imageEl = this.preloadEl.querySelector(`img.${CLASS_BOX_PREVIEW_PRELOAD_CONTENT}`);
-            this.overlayEl = this.preloadEl.querySelector(`.${CLASS_BOX_PREVIEW_PRELOAD_OVERLAY}`);
-            this.bindDOMListeners();
-        });
+                this.containerEl.appendChild(this.wrapperEl);
+                this.preloadEl = this.wrapperEl.querySelector(`.${CLASS_BOX_PREVIEW_PRELOAD}`);
+                this.imageEl = this.preloadEl.querySelector(`img.${CLASS_BOX_PREVIEW_PRELOAD_CONTENT}`);
+                this.overlayEl = this.preloadEl.querySelector(`.${CLASS_BOX_PREVIEW_PRELOAD_OVERLAY}`);
+                this.bindDOMListeners();
+            });
     }
 
     /**
@@ -121,7 +134,7 @@ class DocPreloader extends EventEmitter {
         setDimensions(this.overlayEl, scaledWidth, scaledHeight);
 
         // Add and scale correct number of placeholder elements
-        for (let i = 0; i < numPages - 1; i++) {
+        for (let i = 0; i < numPages - 1; i += 1) {
             const placeholderEl = document.createElement('div');
             placeholderEl.className = CLASS_BOX_PREVIEW_PRELOAD_CONTENT;
             placeholderEl.innerHTML = SPINNER_HTML;
@@ -229,10 +242,10 @@ class DocPreloader extends EventEmitter {
 
         // Calculate pdf width, height, and number of pages from EXIF if possible
         return this.readEXIF(this.imageEl)
-            .then((pdfData) => {
-                const { pdfWidth, pdfHeight, numPages } = pdfData;
-                const { scaledWidth, scaledHeight } = this.getScaledDimensions(pdfWidth, pdfHeight);
-                this.scaleAndShowPreload(scaledWidth, scaledHeight, Math.min(numPages, NUM_PAGES_MAX));
+            .then(pdfData => {
+                this.pdfData = pdfData;
+                const { scaledWidth, scaledHeight } = this.getScaledWidthAndHeight(pdfData);
+                this.scaleAndShowPreload(scaledWidth, scaledHeight, Math.min(pdfData.numPages, NUM_PAGES_MAX));
 
                 // Otherwise, use the preload image's natural dimensions as a base to scale from
             })
@@ -242,6 +255,48 @@ class DocPreloader extends EventEmitter {
                 this.scaleAndShowPreload(scaledWidth, scaledHeight, NUM_PAGES_DEFAULT);
             });
     };
+
+    /**
+     * Gets the scaled width and height from the EXIF data
+     *
+     * @param {Object} pdfData - the EXIF data from the image
+     * @return {Object} the scaled width and height the
+     */
+    getScaledWidthAndHeight(pdfData) {
+        const { pdfWidth, pdfHeight } = pdfData;
+        const { scaledWidth, scaledHeight } = this.getScaledDimensions(pdfWidth, pdfHeight);
+
+        return {
+            scaledWidth,
+            scaledHeight,
+        };
+    }
+
+    /**
+     * Resizes the preload and placeholder elements
+     *
+     * @return {void}
+     */
+    resize() {
+        if (!this.preloadEl || (!this.pdfData && !this.imageEl)) {
+            return;
+        }
+
+        let dimensionData;
+        if (this.pdfData) {
+            dimensionData = this.getScaledWidthAndHeight(this.pdfData);
+        } else {
+            const { naturalWidth: pdfWidth, naturalHeight: pdfHeight } = this.imageEl;
+            dimensionData = this.getScaledDimensions(pdfWidth, pdfHeight);
+        }
+
+        const { scaledWidth, scaledHeight } = dimensionData;
+        // Scale preload and placeholder elements
+        const preloadEls = this.preloadEl.getElementsByClassName(CLASS_BOX_PREVIEW_PRELOAD_CONTENT);
+        for (let i = 0; i < preloadEls.length; i += 1) {
+            setDimensions(preloadEls[i], scaledWidth, scaledHeight);
+        }
+    }
 
     /**
      * Returns scaled PDF dimensions using same algorithm as pdf.js up to a maximum of 1.25x zoom.
@@ -266,7 +321,7 @@ class DocPreloader extends EventEmitter {
 
         return {
             scaledWidth: Math.floor(scale * pdfWidth),
-            scaledHeight: Math.floor(scale * pdfHeight)
+            scaledHeight: Math.floor(scale * pdfHeight),
         };
     }
 
@@ -285,7 +340,7 @@ class DocPreloader extends EventEmitter {
                 /* global EXIF */
                 EXIF.getData(imageEl, () => {
                     const userCommentRaw = EXIF.getTag(imageEl, EXIF_COMMENT_TAG_NAME);
-                    const userComment = userCommentRaw.map((c) => String.fromCharCode(c)).join('');
+                    const userComment = userCommentRaw.map(c => String.fromCharCode(c)).join('');
                     const match = EXIF_COMMENT_REGEX.exec(userComment);
 
                     // There should be 3 pieces of metadata: PDF width, PDF height, and num pages
@@ -328,7 +383,7 @@ class DocPreloader extends EventEmitter {
                     resolve({
                         pdfWidth,
                         pdfHeight,
-                        numPages
+                        numPages,
                     });
                 });
             } catch (e) {
@@ -345,7 +400,7 @@ class DocPreloader extends EventEmitter {
      */
     checkDocumentLoaded() {
         // If document is already loaded, hide the preload and short circuit
-        if (this.containerEl.classList.contains(CLASS_PREVIEW_LOADED)) {
+        if (this.previewUI.previewContainer.classList.contains(CLASS_PREVIEW_LOADED)) {
             this.hidePreload();
             return true;
         }

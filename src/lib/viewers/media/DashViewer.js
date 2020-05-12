@@ -1,11 +1,12 @@
 import VideoBaseViewer from './VideoBaseViewer';
 import PreviewError from '../../PreviewError';
 import fullscreen from '../../Fullscreen';
-import { appendQueryParams, get } from '../../util';
+import Timer from '../../Timer';
+import { appendQueryParams, getProp } from '../../util';
 import { getRepresentation } from '../../file';
 import { MEDIA_STATIC_ASSETS_VERSION } from '../../constants';
 import getLanguageName from '../../lang';
-import { ERROR_CODE, VIEWER_EVENT } from '../../events';
+import { ERROR_CODE, VIEWER_EVENT, MEDIA_METRIC, MEDIA_METRIC_EVENTS } from '../../events';
 import './Dash.scss';
 
 const CSS_CLASS_DASH = 'bp-media-dash';
@@ -19,27 +20,37 @@ const DEFAULT_VIDEO_HEIGHT_PX = 480;
 const SHAKA_CODE_ERROR_RECOVERABLE = 1;
 
 class DashViewer extends VideoBaseViewer {
+    /** @property {Object} - shakaExtern.TextDisplayer that displays auto-generated captions, if available */
+    autoCaptionDisplayer;
+
     /**
      * @inheritdoc
      */
     constructor(options) {
         super(options);
 
+        this.api = options.api;
         // Bind context for callbacks
-        this.loadeddataHandler = this.loadeddataHandler.bind(this);
         this.adaptationHandler = this.adaptationHandler.bind(this);
-        this.shakaErrorHandler = this.shakaErrorHandler.bind(this);
-        this.requestFilter = this.requestFilter.bind(this);
+        this.handleBuffering = this.handleBuffering.bind(this);
+        this.getBandwidthInterval = this.getBandwidthInterval.bind(this);
+        this.handleAudioTrack = this.handleAudioTrack.bind(this);
         this.handleQuality = this.handleQuality.bind(this);
         this.handleSubtitle = this.handleSubtitle.bind(this);
-        this.handleAudioTrack = this.handleAudioTrack.bind(this);
-        this.getBandwidthInterval = this.getBandwidthInterval.bind(this);
+        this.loadeddataHandler = this.loadeddataHandler.bind(this);
+        this.requestFilter = this.requestFilter.bind(this);
+        this.shakaErrorHandler = this.shakaErrorHandler.bind(this);
+        this.restartPlayback = this.restartPlayback.bind(this);
     }
 
     /**
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() first to set up common layout
         super.setup();
 
@@ -83,6 +94,7 @@ class DashViewer extends VideoBaseViewer {
         if (this.mediaControls) {
             this.mediaControls.removeListener('qualitychange', this.handleQuality);
             this.mediaControls.removeListener('subtitlechange', this.handleSubtitle);
+            this.mediaControls.removeListener('audiochange', this.handleAudioTrack);
         }
         this.removeStats();
         super.destroy();
@@ -95,10 +107,10 @@ class DashViewer extends VideoBaseViewer {
      * @return {void}
      */
     load() {
-        this.setup();
         this.mediaUrl = this.options.representation.content.url_template;
         this.watermarkCacheBust = Date.now();
-        this.mediaEl.addEventListener('loadeddata', this.loadeddataHandler);
+
+        this.addEventListenersForMediaLoad();
 
         return Promise.all([this.loadAssets(this.getJSAssets()), this.getRepStatus().getPromise()])
             .then(() => {
@@ -123,7 +135,7 @@ class DashViewer extends VideoBaseViewer {
         const { representation } = this.options;
         if (content && this.isRepresentationReady(representation)) {
             const template = representation.content.url_template;
-            get(this.createContentUrlWithAuthParams(template, MANIFEST), 'any');
+            this.api.get(this.createContentUrlWithAuthParams(template, MANIFEST), { type: 'document' });
         }
     }
 
@@ -153,9 +165,10 @@ class DashViewer extends VideoBaseViewer {
         this.player = new shaka.Player(this.mediaEl);
         this.player.addEventListener('adaptation', this.adaptationHandler);
         this.player.addEventListener('error', this.shakaErrorHandler);
+        this.player.addEventListener('buffering', this.handleBuffering);
         this.player.configure({
             abr: {
-                enabled: false
+                enabled: false,
             },
             streaming: {
                 bufferingGoal: MAX_BUFFER,
@@ -164,14 +177,89 @@ class DashViewer extends VideoBaseViewer {
                     maxAttempts: 100, // the maximum number of requests before we fail
                     baseDelay: 500, // the base delay in ms between retries
                     backoffFactor: 2, // the multiplicative backoff factor between retries
-                    fuzzFactor: 0.5 // the fuzz factor to apply to each retry delay
-                }
-            }
+                    fuzzFactor: 0.5, // the fuzz factor to apply to each retry delay
+                },
+            },
         });
         this.player.getNetworkingEngine().registerRequestFilter(this.requestFilter);
 
         this.startLoadTimer();
         this.player.load(this.mediaUrl, this.startTimeInSeconds).catch(this.shakaErrorHandler);
+    }
+
+    /**
+     * Handles the buffering events from shaka player
+     *
+     * @see {@link https://shaka-player-demo.appspot.com/docs/api/shaka.Player.html#.event:BufferingEvent}
+     * @param {Object} object - BufferingEvent object
+     * @param {boolean} object.buffering - Indicates whether the player is buffering or not
+     */
+    handleBuffering({ buffering }) {
+        const tag = this.createTimerTag(MEDIA_METRIC.totalBufferLag);
+
+        if (buffering) {
+            Timer.start(tag);
+        } else {
+            Timer.stop(tag);
+            this.metrics[MEDIA_METRIC.totalBufferLag] += Timer.get(tag).elapsed;
+            Timer.reset(tag);
+        }
+    }
+
+    /**
+     * Processes the buffer fill metric which represents the initial buffer time before playback begins
+     * @override
+     * @emits MEDIA_METRIC_EVENTS.bufferFill
+     * @return {void}
+     */
+    processBufferFillMetric() {
+        const tag = this.createTimerTag(MEDIA_METRIC.bufferFill);
+        const bufferFill = Timer.get(tag).elapsed;
+        this.metrics[MEDIA_METRIC.bufferFill] = bufferFill;
+
+        this.emitMetric(MEDIA_METRIC_EVENTS.bufferFill, bufferFill);
+    }
+
+    /**
+     * Processes the media playback metrics
+     * @override
+     * @emits MEDIA_METRIC_EVENTS.endPlayback
+     * @return {void}
+     */
+    processMetrics() {
+        if (!this.loaded) {
+            return;
+        }
+
+        const totalBufferLag = this.metrics[MEDIA_METRIC.totalBufferLag];
+        const watchLength = this.determineWatchLength();
+
+        this.metrics[MEDIA_METRIC.totalBufferLag] = totalBufferLag;
+        this.metrics[MEDIA_METRIC.lagRatio] = totalBufferLag / watchLength;
+        this.metrics[MEDIA_METRIC.duration] = this.mediaEl ? this.mediaEl.duration * 1000 : 0;
+        this.metrics[MEDIA_METRIC.watchLength] = watchLength;
+
+        this.emitMetric(MEDIA_METRIC_EVENTS.endPlayback, this.metrics[MEDIA_METRIC.lagRatio]);
+    }
+
+    /**
+     * Determines the watch length, or how much of the media was consumed
+     * @return {number} - The watch length in milliseconds
+     */
+    determineWatchLength() {
+        if (!this.mediaEl || !this.mediaEl.played) {
+            return -1;
+        }
+
+        const playedParts = this.mediaEl.played;
+        let playLength = 0;
+        for (let i = 0; i < playedParts.length; i += 1) {
+            const start = playedParts.start(i);
+            const end = playedParts.end(i);
+            playLength += end - start;
+        }
+
+        return playLength * 1000;
     }
 
     /**
@@ -186,7 +274,7 @@ class DashViewer extends VideoBaseViewer {
     requestFilter(type, request) {
         const asset = type === shaka.net.NetworkingEngine.RequestType.MANIFEST ? MANIFEST : undefined;
         /* eslint-disable no-param-reassign */
-        request.uris = request.uris.map((uri) => {
+        request.uris = request.uris.map(uri => {
             let newUri = this.createContentUrlWithAuthParams(uri, asset);
             if (asset !== MANIFEST && this.options.file.watermark_info.is_watermarked) {
                 newUri = appendQueryParams(newUri, { watermark_content: this.watermarkCacheBust });
@@ -204,7 +292,7 @@ class DashViewer extends VideoBaseViewer {
      */
     getActiveTrack() {
         const tracks = this.player.getVariantTracks();
-        return tracks.find((track) => track.active);
+        return tracks.find(track => track.active);
     }
 
     /**
@@ -232,7 +320,7 @@ class DashViewer extends VideoBaseViewer {
     enableVideoId(videoId) {
         const tracks = this.player.getVariantTracks();
         const activeTrack = this.getActiveTrack();
-        const newTrack = tracks.find((track) => track.videoId === videoId && track.audioId === activeTrack.audioId);
+        const newTrack = tracks.find(track => track.videoId === videoId && track.audioId === activeTrack.audioId);
         if (newTrack && newTrack.id !== activeTrack.id) {
             this.showLoadingIcon(newTrack.id);
             this.player.selectVariantTrack(newTrack, true);
@@ -251,7 +339,7 @@ class DashViewer extends VideoBaseViewer {
         const tracks = this.player.getVariantTracks();
         const activeTrack = this.getActiveTrack();
         // We select a track that has the desired audio role but maintains the same video ID as our currently active track.
-        const newTrack = tracks.find((track) => track.roles[0] === role && track.videoId === activeTrack.videoId);
+        const newTrack = tracks.find(track => track.roles[0] === role && track.videoId === activeTrack.videoId);
         if (newTrack && newTrack.audioId !== activeTrack.audioId) {
             this.showLoadingIcon(newTrack.id);
             this.player.selectVariantTrack(newTrack, true);
@@ -279,12 +367,26 @@ class DashViewer extends VideoBaseViewer {
      */
     handleSubtitle() {
         const subtitleIdx = parseInt(this.cache.get('media-subtitles'), 10);
-        if (this.textTracks[subtitleIdx] !== undefined) {
+
+        // Auto-generated index 0 ==> turn auto-generated text track on
+        if (this.autoCaptionDisplayer && subtitleIdx === 0) {
+            // Manually set text visibility with the custom Shaka Text Displayer
+            this.autoCaptionDisplayer.setTextVisibility(true);
+            this.emit('subtitlechange', __('auto_generated'));
+
+            // Valid non-auto-generated index ==> turn specified text track on
+        } else if (this.textTracks[subtitleIdx] !== undefined) {
             const track = this.textTracks[subtitleIdx];
             this.player.selectTextTrack(track);
             this.player.setTextTrackVisibility(true);
             this.emit('subtitlechange', track.language);
+
+            // Index -1 ==> turn subtitles/captions off
         } else {
+            if (this.autoCaptionDisplayer) {
+                this.autoCaptionDisplayer.setTextVisibility(false);
+            }
+
             this.player.setTextTrackVisibility(false);
             this.emit('subtitlechange', null);
         }
@@ -377,6 +479,32 @@ class DashViewer extends VideoBaseViewer {
     }
 
     /**
+     * Determain whether is an expired token error
+     *
+     * @private
+     * @param {Object} details - error details
+     * @return {bool}
+     */
+    isExpiredTokenError({ details }) {
+        // unauthorized error may be caused by token expired
+        return details.code === shaka.util.Error.Code.BAD_HTTP_STATUS && details.data[1] === 401;
+    }
+
+    /**
+     * Restart playback using new token
+     *
+     * @private
+     * @param {string} newToken - new token
+     * @return {void}
+     */
+    restartPlayback(newToken) {
+        this.options.token = newToken;
+        if (this.player.retryStreaming()) {
+            this.retryTokenCount = 0;
+        }
+    }
+
+    /**
      * Handles errors thrown by shaka player. See https://shaka-player-demo.appspot.com/docs/api/shaka.util.Error.html
      *
      * @private
@@ -388,11 +516,19 @@ class DashViewer extends VideoBaseViewer {
         const error = new PreviewError(
             ERROR_CODE.SHAKA,
             __('error_refresh'),
-            {},
+            {
+                code: normalizedShakaError.code,
+                data: normalizedShakaError.data,
+                severity: normalizedShakaError.severity,
+            },
             `Shaka error. Code = ${normalizedShakaError.code}, Category = ${
                 normalizedShakaError.category
-            }, Severity = ${normalizedShakaError.severity}, Data = ${normalizedShakaError.data.toString()}`
+            }, Severity = ${normalizedShakaError.severity}, Data = ${normalizedShakaError.data.toString()}`,
         );
+
+        if (this.handleExpiredTokenError(error)) {
+            return;
+        }
 
         if (normalizedShakaError.severity > SHAKA_CODE_ERROR_RECOVERABLE) {
             // Anything greater than a recoverable error should be critical
@@ -401,6 +537,7 @@ class DashViewer extends VideoBaseViewer {
                 this.handleDownloadError(error, downloadURL);
                 return;
             }
+
             // critical error
             this.triggerError(error);
         }
@@ -426,13 +563,82 @@ class DashViewer extends VideoBaseViewer {
      * @return {void}
      */
     loadSubtitles() {
+        // Load subtitles from video, if available
         this.textTracks = this.player.getTextTracks().sort((track1, track2) => track1.id - track2.id);
         if (this.textTracks.length > 0) {
             this.mediaControls.initSubtitles(
-                this.textTracks.map((track) => getLanguageName(track.language) || track.language),
-                getLanguageName(this.options.location.locale.substring(0, 2))
+                this.textTracks.map(track => getLanguageName(track.language) || track.language),
+                getLanguageName(this.options.location.locale.substring(0, 2)),
             );
         }
+    }
+
+    /**
+     * Loads auto-generated captions from skills using a shaka SimpleTextDisplayer
+     * @TODO 07-07-18: Support both auto-generated captions and subtitles from videos
+     *
+     * @public
+     * @param {Object} transcriptCard - transcript card from Box Skills
+     * @return {void}
+     */
+    loadAutoGeneratedCaptions(transcriptCard) {
+        // Avoid regenerating captions if the object has not changed
+        if (this.transcript === transcriptCard) {
+            return;
+        }
+
+        this.transcript = transcriptCard;
+        const textCues = this.createTextCues(transcriptCard);
+
+        // Don't do anything if there are no cues
+        if (!textCues.length) {
+            return;
+        }
+
+        // We know we are editing the transcript if we already have created an autoCaptionDisplayer
+        if (this.autoCaptionDisplayer) {
+            const areAutoCaptionsVisible = this.autoCaptionDisplayer.isTextVisible();
+            this.autoCaptionDisplayer.destroy();
+            this.setupAutoCaptionDisplayer(textCues);
+            this.autoCaptionDisplayer.setTextVisibility(areAutoCaptionsVisible);
+        } else {
+            this.setupAutoCaptionDisplayer(textCues);
+            // Update the subtitles/caption button to reflect auto-translation
+            this.mediaControls.setLabel(this.mediaControls.subtitlesButtonEl, __('media_auto_generated_captions'));
+            this.mediaControls.initSubtitles(
+                [__('auto_generated')],
+                getLanguageName(this.options.location.locale.substring(0, 2)),
+            );
+        }
+    }
+
+    /**
+     * Turns a Box Skills transcript card into an array of shaka text cues
+     *
+     * @param {Object} transcriptCard - transcript card from Box Skills
+     * @return {Array} Array of text cues
+     */
+    createTextCues(transcriptCard) {
+        const entries = getProp(transcriptCard, 'entries', []);
+        return entries.map(entry => {
+            // Set defaults if transcript data is malformed (start/end: 0s, text: '')
+            const { appears = [{}], text = '' } = entry;
+            const { start = 0, end = 0 } = Array.isArray(appears) && appears.length > 0 ? appears[0] : {};
+            return new shaka.text.Cue(start, end, text);
+        });
+    }
+
+    /**
+     * Sets up the autoCaption displayer using a shaka SimpleTextDisplayer
+     *
+     * @public
+     * @param {Array} textCues - Array of text cues which map text to a timestamp
+     * @return {void}
+     */
+    setupAutoCaptionDisplayer(textCues) {
+        this.autoCaptionDisplayer = new shaka.text.SimpleTextDisplayer(this.mediaEl);
+        this.autoCaptionDisplayer.append(textCues);
+        this.player.configure({ textDisplayFactory: this.autoCaptionDisplayer });
     }
 
     /**
@@ -446,7 +652,7 @@ class DashViewer extends VideoBaseViewer {
         const uniqueAudioVariants = [];
 
         let i = 0;
-        for (i = 0; i < variants.length; i++) {
+        for (i = 0; i < variants.length; i += 1) {
             const audioTrack = variants[i];
             if (audioIds.indexOf(audioTrack.audioId) < 0) {
                 audioIds.push(audioTrack.audioId);
@@ -454,14 +660,14 @@ class DashViewer extends VideoBaseViewer {
             }
         }
 
-        this.audioTracks = uniqueAudioVariants.map((track) => ({
+        this.audioTracks = uniqueAudioVariants.map(track => ({
             language: track.language,
-            role: track.roles[0]
+            role: track.roles[0],
         }));
 
         if (this.audioTracks.length > 1) {
             // translate the language first
-            const languages = this.audioTracks.map((track) => getLanguageName(track.language) || track.language);
+            const languages = this.audioTracks.map(track => getLanguageName(track.language) || track.language);
             this.mediaControls.initAlternateAudio(languages);
         }
     }
@@ -478,12 +684,13 @@ class DashViewer extends VideoBaseViewer {
             return;
         }
 
+        this.calculateVideoDimensions();
+        this.loadUI();
+
         if (this.isAutoplayEnabled()) {
             this.autoplay();
         }
 
-        this.calculateVideoDimensions();
-        this.loadUI();
         this.loadFilmStrip();
         this.resize();
         this.handleVolume();
@@ -498,7 +705,10 @@ class DashViewer extends VideoBaseViewer {
         // Make media element visible after resize
         this.showMedia();
         this.mediaControls.show();
-        this.mediaContainerEl.focus();
+
+        if (this.options.autoFocus) {
+            this.mediaContainerEl.focus();
+        }
     }
 
     /**
@@ -570,7 +780,7 @@ class DashViewer extends VideoBaseViewer {
         let height = this.videoHeight || 0;
         const viewport = {
             height: this.wrapperEl.clientHeight,
-            width: this.wrapperEl.clientWidth
+            width: this.wrapperEl.clientWidth,
         };
 
         // We need the width to be atleast wide enough for the controls
@@ -586,7 +796,7 @@ class DashViewer extends VideoBaseViewer {
         // that larger than the current videoHeight.
         this.mediaEl.style.width = '';
 
-        if (!fullscreen.isFullscreen(this.containerEl) && (width <= viewport.width && height <= viewport.height)) {
+        if (!fullscreen.isFullscreen(this.containerEl) && width <= viewport.width && height <= viewport.height) {
             // Case 1: The video ends up fitting within the viewport of preview
             // For this case, just set the video player dimensions to match the
             // actual video's dimenstions.

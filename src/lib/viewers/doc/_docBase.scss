@@ -1,19 +1,201 @@
 @import '../../boxuiVariables';
 
+$thumbnail-border-radius: 3px;
+// Accounts for the 1px border on the right so the remaining width is actually 225
+$thumbnail-sidebar-width: 226px;
+
+@mixin bp-breakpoint-medium {
+    @media (min-width: 600px) {
+        @content;
+    }
+}
+
+.bp {
+    .bp-toggle-thumbnails-icon {
+        display: none;
+    }
+
+    .bp-thumbnails-container {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        display: none;
+        flex: 0 0 auto;
+        width: $thumbnail-sidebar-width;
+        border-right: solid 1px $seesee;
+
+        &:focus {
+            outline: none;
+        }
+    }
+
+    .bp-thumbnail {
+        position: relative;
+        display: flex;
+        flex: 1 0 auto;
+        margin-right: 25px;
+        padding: 0;
+    }
+
+    .bp-thumbnail-page-number {
+        flex: 0 0 34px;
+        width: 34px;
+        margin: 4px 6px 0 0;
+        color: $twos;
+        font-size: 11px;
+        line-height: 16px;
+        text-align: right;
+        pointer-events: none;
+    }
+
+    .bp-thumbnail-nav {
+        flex: 1 0 154px;
+        padding: 0;
+        overflow: hidden;
+        background-color: $d-eight;
+        border: $thumbnail-border-radius solid $ffive;
+        border-radius: $thumbnail-border-radius;
+        outline: none;
+        cursor: pointer;
+    }
+
+    .bp-thumbnail:not(.bp-thumbnail-is-selected) {
+        .bp-thumbnail-nav:focus,
+        .bp-thumbnail-nav:hover {
+            margin: 2px;
+            border: 1px solid $seesee;
+        }
+    }
+
+    .bp-thumbnail-image {
+        background-repeat: no-repeat;
+        background-position: center;
+        background-size: contain; // Needed for the case of document with portrait and landscape orientations
+        pointer-events: none;
+    }
+
+    .bp-thumbnail.bp-thumbnail-is-selected .bp-thumbnail-nav {
+        border-color: $fours;
+    }
+
+    .bp-thumbnails-container--dark {
+        background-color: $fours;
+        border-right-color: $black;
+
+        .bp-thumbnail-page-number {
+            color: $white;
+        }
+
+        .bp-thumbnail-nav {
+            border-color: $fours;
+        }
+
+        .bp-thumbnail-is-selected .bp-thumbnail-nav {
+            border-color: $black;
+        }
+    }
+
+    @keyframes bp-thumbnails-open {
+        0% {
+            display: none;
+            transform: translateX(-$thumbnail-sidebar-width);
+        }
+
+        1% {
+            display: flex;
+            transform: translateX(-$thumbnail-sidebar-width);
+        }
+
+        100% {
+            transform: translateX(0);
+        }
+    }
+
+    @include bp-breakpoint-medium {
+        $bp-thumbnails-animation: 300ms cubic-bezier(.4, 0, .2, 1);
+
+        &.bp-loaded.bp-thumbnails-open-active,
+        &.bp-loaded.bp-thumbnails-close-active {
+            .bp-content {
+                transition: left $bp-thumbnails-animation;
+            }
+        }
+
+        .bp-thumbnails-container {
+            display: none;
+            transition: transform $bp-thumbnails-animation;
+        }
+
+        &,
+        &.bp-thumbnails-close,
+        &.bp-thumbnails-close-active {
+            .bp-thumbnails-container {
+                transform: translateX(-$thumbnail-sidebar-width);
+            }
+        }
+
+        &.bp-thumbnails-close {
+            .bp-thumbnails-container {
+                display: none;
+            }
+        }
+
+        &.bp-thumbnails-close-active {
+            .bp-thumbnails-container {
+                display: flex;
+            }
+        }
+
+        &.bp-thumbnails-open {
+            .bp-content {
+                left: $thumbnail-sidebar-width;
+
+                &.bp-is-fullscreen {
+                    left: 0;
+                }
+            }
+
+            .bp-thumbnails-container {
+                display: flex;
+                transform: translateX(0);
+            }
+        }
+
+        &.bp-thumbnails-open-active {
+            .bp-thumbnails-container {
+                animation: bp-thumbnails-open $bp-thumbnails-animation;
+            }
+        }
+
+        .bp-controls-btn.bp-toggle-thumbnails-icon {
+            display: block;
+        }
+    }
+}
+
+.bp-theme-dark {
+    .bp {
+        .bp-thumbnails-container {
+            border-right-color: $twos;
+        }
+    }
+}
+
 .bp-doc {
+    position: absolute;
+    top: 0;
+    right: 0;
     bottom: 0;
-    height: 100%;
     left: 0;
-    letter-spacing: normal; // Reset Box UI
+    width: 100%;
+    height: 100%;
     margin: 0;
     overflow: hidden;
-    position: absolute;
-    right: 0;
+    letter-spacing: normal; // Reset Box UI
+    user-select: none;
     // Removes canvas flickering on tap for iOS Safari
     -webkit-tap-highlight-color: transparent;
-    top: 0;
-    user-select: none;
-    width: 100%;
 
     // Hides black canvas during rendering
     [hidden] {
@@ -33,8 +215,7 @@
 
     //---------- Override CSS from generic PDFJS viewer build ----------//
     .pdfViewer .page {
-        border: 0;
-        border-image: none;
+        position: relative;
         /* stylelint-disable declaration-no-important */
         box-sizing: content-box !important;
         /* stylelint-enable declaration-no-important */
@@ -42,12 +223,13 @@
         // We use padding instead of margin to push down since we want to
         // include this padding when PDF.js jumps to pages
         padding: 15px 0;
-        position: relative;
+        border: 0;
+        border-image: none;
 
         // Override loading icon styles from pdf.js - we use a CSS spinner absolutely centered
         .loadingIcon {
-            background: none;
             margin: auto;
+            background: none;
         }
 
         // Fixes annotation icon broken src
@@ -66,8 +248,8 @@
     }
 
     .textLayer {
-        bottom: auto;
         top: 15px; // Match 15px padding top on page
+        bottom: auto;
 
         // Only allow text divs to be selected
         > div {
@@ -86,11 +268,37 @@
         user-select: text;
     }
 
-    // This is so hover and click targets for links inside the document show
-    // up correctly. We add 15px top margin since PDF.js sets the top for these
-    // manually assuming there is no vertical padding on the page
-    .annotationLayer section {
-        margin-top: 15px;
+    .annotationLayer {
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        h6,
+        p {
+            margin: 0;
+        }
+
+        h1 {
+            font-size: 1em;
+        }
+
+        // This is so hover and click targets for links inside the document show
+        // up correctly. We add 15px top margin since PDF.js sets the top for these
+        // manually assuming there is no vertical padding on the page
+        section {
+            margin-top: 15px;
+        }
+
+        // Prevent placeholder {{ date }}, {{ time }} text from displaying when
+        // hovering over baked-in pdf annotations
+        span[data-l10n-id] {
+            display: none;
+        }
+
+        .popup {
+            font-size: inherit;
+        }
     }
 }
 
@@ -108,4 +316,9 @@
     .bp-print-notification {
         display: block;
     }
+}
+
+// Hide the toggle thumbnails button when in fullscreen
+.bp-content.bp-is-fullscreen .bp-toggle-thumbnails-icon {
+    display: none;
 }

@@ -2,9 +2,9 @@ import EventEmitter from 'events';
 import cloneDeep from 'lodash/cloneDeep';
 import debounce from 'lodash/debounce';
 import fullscreen from '../Fullscreen';
+import intlUtil from '../i18n';
 import RepStatus from '../RepStatus';
 import Browser from '../Browser';
-import DownloadReachability from '../DownloadReachability';
 import {
     getProp,
     appendQueryParams,
@@ -15,32 +15,34 @@ import {
     loadScripts,
     prefetchAssets,
     createAssetUrlCreator,
-    replacePlaceholders
+    replacePlaceholders,
 } from '../util';
 import {
-    CLASS_FULLSCREEN,
-    CLASS_FULLSCREEN_UNSUPPORTED,
-    CLASS_HIDDEN,
+    ANNOTATOR_EVENT,
     CLASS_BOX_PREVIEW_MOBILE,
+    CLASS_HIDDEN,
     FILE_OPTION_START,
     FILE_OPTION_OFFSET,
-    SELECTOR_BOX_PREVIEW,
-    SELECTOR_BOX_PREVIEW_BTN_ANNOTATE_POINT,
     SELECTOR_BOX_PREVIEW_BTN_ANNOTATE_DRAW,
+    SELECTOR_BOX_PREVIEW_BTN_ANNOTATE_POINT,
+    SELECTOR_BOX_PREVIEW_CONTENT,
     SELECTOR_BOX_PREVIEW_CRAWLER_WRAPPER,
     SELECTOR_BOX_PREVIEW_ICON,
+    SELECTOR_BOX_PREVIEW,
     STATUS_SUCCESS,
-    STATUS_VIEWABLE
+    STATUS_VIEWABLE,
 } from '../constants';
 import { getIconFromExtension, getIconFromName } from '../icons/icons';
 import { VIEWER_EVENT, ERROR_CODE, LOAD_METRIC, DOWNLOAD_REACHABILITY_METRICS } from '../events';
+import { EXCEL_EXTENSIONS, IWORK_EXTENSIONS } from '../extensions';
+import { AnnotationMode } from '../AnnotationControls';
 import PreviewError from '../PreviewError';
 import Timer from '../Timer';
 
 const VIEWER_STATUSES = {
     error: 'error',
     loaded: 'loaded',
-    loading: 'loading'
+    loading: 'loading',
 };
 
 const ANNOTATIONS_JS = 'annotations.js';
@@ -52,25 +54,21 @@ const LOAD_TIMEOUT_MS = 180000; // 3m
 const RESIZE_WAIT_TIME_IN_MILLIS = 300;
 const ANNOTATION_BUTTONS = {
     point: {
+        selector: SELECTOR_BOX_PREVIEW_BTN_ANNOTATE_POINT,
         title: __('annotation_point_toggle'),
-        selector: SELECTOR_BOX_PREVIEW_BTN_ANNOTATE_POINT
     },
     draw: {
+        selector: SELECTOR_BOX_PREVIEW_BTN_ANNOTATE_DRAW,
         title: __('annotation_draw_toggle'),
-        selector: SELECTOR_BOX_PREVIEW_BTN_ANNOTATE_DRAW
-    }
-};
-const ANNOTATOR_EVENT = {
-    modeEnter: 'annotationmodeenter',
-    modeExit: 'annotationmodeexit',
-    fetch: 'annotationsfetched',
-    error: 'annotationerror',
-    scale: 'scaleannotations'
+    },
 };
 
 const DEFAULT_FILE_ICON_NAME = 'FILE_DEFAULT';
 
 class BaseViewer extends EventEmitter {
+    /** @property {Api} - Api instance used for XHR calls */
+    api;
+
     /** @property {Controls} - UI used to interact with the document in the viewer */
     controls;
 
@@ -116,6 +114,18 @@ class BaseViewer extends EventEmitter {
     /** @property {boolean} - Has the viewer retried downloading the content */
     hasRetriedContentDownload = false;
 
+    /** @property {Object} - Keeps track of which metrics have been emitted already */
+    emittedMetrics;
+
+    /** @property {HTMLElement} - The root element (.bp) of the viewer (includes the loading wrapper as well as content) */
+    rootEl;
+
+    /** @property {HTMLElement} - The .bp-content which is the container for the viewer's content */
+    containerEl;
+
+    /** @property {boolean} - Stores whether the Viewer has been setup yet. */
+    isSetup = false;
+
     /**
      * [constructor]
      *
@@ -125,11 +135,14 @@ class BaseViewer extends EventEmitter {
     constructor(options) {
         super();
         this.options = options;
+        this.api = options.api;
         this.cache = options.cache;
         this.previewUI = options.ui;
         this.repStatuses = [];
         this.isMobile = Browser.isMobile();
         this.hasTouch = Browser.hasTouch();
+
+        this.emittedMetrics = {};
 
         // Bind context for callbacks
         this.resetLoadTimeout = this.resetLoadTimeout.bind(this);
@@ -137,13 +150,18 @@ class BaseViewer extends EventEmitter {
         this.debouncedResizeHandler = this.getResizeHandler().bind(this);
         this.handleAssetError = this.handleAssetError.bind(this);
         this.toggleFullscreen = this.toggleFullscreen.bind(this);
-        this.onFullscreenToggled = this.onFullscreenToggled.bind(this);
         this.mobileZoomStartHandler = this.mobileZoomStartHandler.bind(this);
         this.mobileZoomChangeHandler = this.mobileZoomChangeHandler.bind(this);
         this.mobileZoomEndHandler = this.mobileZoomEndHandler.bind(this);
         this.handleAnnotatorEvents = this.handleAnnotatorEvents.bind(this);
-        this.annotationsLoadHandler = this.annotationsLoadHandler.bind(this);
+        this.handleAnnotationCreateEvent = this.handleAnnotationCreateEvent.bind(this);
+        this.handleFullscreenEnter = this.handleFullscreenEnter.bind(this);
+        this.handleFullscreenExit = this.handleFullscreenExit.bind(this);
+        this.createAnnotator = this.createAnnotator.bind(this);
         this.viewerLoadHandler = this.viewerLoadHandler.bind(this);
+        this.initAnnotations = this.initAnnotations.bind(this);
+        this.loadBoxAnnotations = this.loadBoxAnnotations.bind(this);
+        this.createViewer = this.createViewer.bind(this);
     }
 
     /**
@@ -152,6 +170,10 @@ class BaseViewer extends EventEmitter {
      * @return {void}
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         if (this.options.file) {
             const fileExt = this.options.file.extension;
             this.fileLoadingIcon = getIconFromExtension(fileExt);
@@ -170,8 +192,10 @@ class BaseViewer extends EventEmitter {
             container = document.querySelector(container);
         }
 
-        // From the perspective of viewers bp holds everything
-        this.containerEl = container.querySelector(SELECTOR_BOX_PREVIEW);
+        this.rootEl = container.querySelector(SELECTOR_BOX_PREVIEW);
+
+        // From the perspective of viewers bp-content holds everything
+        this.containerEl = container.querySelector(SELECTOR_BOX_PREVIEW_CONTENT);
 
         // Attach event listeners
         this.addCommonListeners();
@@ -181,15 +205,18 @@ class BaseViewer extends EventEmitter {
 
         // For mobile browsers add mobile class just in case viewers need it
         if (this.isMobile) {
-            this.containerEl.classList.add(CLASS_BOX_PREVIEW_MOBILE);
+            this.rootEl.classList.add(CLASS_BOX_PREVIEW_MOBILE);
         }
 
-        // Attempts to load annotations assets and initializes annotations if
-        // the assets are available, the showAnnotations flag is true, and the
-        // expiring embed is not a shared link
+        // Creates a promise that the annotator will be constructed if annotations are
+        // enabled and the expiring embed is not a shared link
         if (this.areAnnotationsEnabled() && !this.options.sharedLink) {
-            this.loadAnnotator();
+            this.annotatorPromise = new Promise(resolve => {
+                this.annotatorPromiseResolver = resolve;
+            });
         }
+
+        this.isSetup = true;
     }
 
     /**
@@ -218,13 +245,13 @@ class BaseViewer extends EventEmitter {
      */
     destroy() {
         if (this.repStatuses) {
-            this.repStatuses.forEach((repStatus) => {
+            this.repStatuses.forEach(repStatus => {
                 repStatus.removeListener('conversionpending', this.resetLoadTimeout);
                 repStatus.destroy();
             });
         }
 
-        fullscreen.destroy();
+        fullscreen.removeAllListeners();
         document.defaultView.removeEventListener('resize', this.debouncedResizeHandler);
         this.removeAllListeners();
 
@@ -240,6 +267,9 @@ class BaseViewer extends EventEmitter {
         }
 
         this.destroyed = true;
+        this.annotatorPromise = null;
+        this.annotatorPromiseResolver = null;
+        this.emittedMetrics = null;
         this.emit('destroy');
     }
 
@@ -289,13 +319,14 @@ class BaseViewer extends EventEmitter {
     }
 
     /**
-     * Start the load timer for fullDocumentLoad event.
+     * Start the load timer for contentLoadTime event.
      *
      * @protected
      * @return {void}
      */
     startLoadTimer() {
-        const tag = Timer.createTag(this.options.file.id, LOAD_METRIC.fullDocumentLoadTime);
+        const { file } = this.options;
+        const tag = Timer.createTag(file.id, LOAD_METRIC.contentLoadTime);
         Timer.start(tag);
     }
 
@@ -307,7 +338,7 @@ class BaseViewer extends EventEmitter {
      */
     handleAssetError(err) {
         const originalMessage = err ? err.message : '';
-        const error = new PreviewError(ERROR_CODE.LOAD_ASSET, '', {}, originalMessage);
+        const error = err instanceof PreviewError ? err : new PreviewError(ERROR_CODE.LOAD_ASSET, originalMessage, {});
         this.triggerError(error);
         this.destroyed = true;
     }
@@ -320,17 +351,19 @@ class BaseViewer extends EventEmitter {
      * @return {void}
      */
     handleDownloadError(err, downloadURL) {
-        if (this.hasRetriedContentDownload) {
+        const isRepDeleted = getProp(err, 'details.isRepDeleted', false);
+
+        if (this.hasRetriedContentDownload || isRepDeleted) {
             this.triggerError(err);
             return;
         }
 
-        if (DownloadReachability.isCustomDownloadHost(downloadURL)) {
-            DownloadReachability.setDownloadReachability(downloadURL).then((isBlocked) => {
+        if (this.api.reachability.constructor.isCustomDownloadHost(downloadURL)) {
+            this.api.reachability.setDownloadReachability(downloadURL).then(isBlocked => {
                 if (isBlocked) {
                     this.emitMetric(
                         DOWNLOAD_REACHABILITY_METRICS.DOWNLOAD_BLOCKED,
-                        DownloadReachability.getHostnameFromUrl(downloadURL)
+                        this.api.reachability.constructor.getHostnameFromUrl(downloadURL),
                     );
                 }
             });
@@ -403,7 +436,7 @@ class BaseViewer extends EventEmitter {
     createContentUrl(template, asset) {
         if (this.hasRetriedContentDownload) {
             // eslint-disable-next-line
-            template = DownloadReachability.replaceDownloadHostWithDefault(template);
+            template = this.api.reachability.constructor.replaceDownloadHostWithDefault(template);
         }
 
         // Append optional query params
@@ -448,9 +481,9 @@ class BaseViewer extends EventEmitter {
      * @return {void}
      */
     addCommonListeners() {
-        // Attach common full screen event listeners
-        fullscreen.addListener('enter', this.onFullscreenToggled);
-        fullscreen.addListener('exit', this.onFullscreenToggled);
+        // Attach full screen event listeners
+        fullscreen.addListener('enter', this.handleFullscreenEnter);
+        fullscreen.addListener('exit', this.handleFullscreenExit);
 
         // Add a resize handler for the window
         document.defaultView.addEventListener('resize', this.debouncedResizeHandler);
@@ -472,17 +505,17 @@ class BaseViewer extends EventEmitter {
      */
     viewerLoadHandler(event) {
         const contentTemplate = getProp(this.options, 'representation.content.url_template', '');
-        const downloadHostToNotify = DownloadReachability.getDownloadNotificationToShow(contentTemplate);
+        const downloadHostToNotify = this.api.reachability.constructor.getDownloadNotificationToShow(contentTemplate);
         if (downloadHostToNotify) {
             this.previewUI.notification.show(
                 replacePlaceholders(__('notification_degraded_preview'), [downloadHostToNotify]),
-                __('notification_button_default_text'),
-                true
+                null,
+                true,
             );
 
-            DownloadReachability.setDownloadHostNotificationShown(downloadHostToNotify);
+            this.api.reachability.constructor.setDownloadHostNotificationShown(downloadHostToNotify);
             this.emitMetric(DOWNLOAD_REACHABILITY_METRICS.NOTIFICATION_SHOWN, {
-                host: downloadHostToNotify
+                host: downloadHostToNotify,
             });
         }
 
@@ -490,8 +523,9 @@ class BaseViewer extends EventEmitter {
             this.scale = event.scale;
         }
 
-        if (this.annotationsLoadPromise) {
-            this.annotationsLoadPromise.then(this.annotationsLoadHandler).catch(() => {});
+        // Ensures that the annotator has been created first
+        if (this.annotatorPromise) {
+            this.annotatorPromise.then(this.initAnnotations);
         }
     }
 
@@ -516,17 +550,31 @@ class BaseViewer extends EventEmitter {
     }
 
     /**
-     * Applies appropriate styles and resizes the document depending on fullscreen state
+     * Resize the document depending on fullscreen state
      *
      * @return {void}
      */
-    onFullscreenToggled() {
-        this.containerEl.classList.toggle(CLASS_FULLSCREEN);
-        if (!fullscreen.isSupported()) {
-            this.containerEl.classList.toggle(CLASS_FULLSCREEN_UNSUPPORTED);
-        }
-
+    handleFullscreenEnter() {
         this.resize();
+
+        if (this.areNewAnnotationsEnabled() && this.annotator && this.annotationControls) {
+            this.annotator.emit(ANNOTATOR_EVENT.setVisibility, false);
+
+            this.annotator.toggleAnnotationMode(AnnotationMode.NONE);
+            this.annotationControls.resetControls();
+        }
+    }
+
+    /**
+     * Resize the document depending on fullscreen state
+     *
+     * @return {void}
+     */
+    handleFullscreenExit() {
+        this.resize();
+        if (this.areNewAnnotationsEnabled() && this.annotator) {
+            this.annotator.emit(ANNOTATOR_EVENT.setVisibility, true);
+        }
     }
 
     /**
@@ -539,7 +587,7 @@ class BaseViewer extends EventEmitter {
     resize() {
         this.emit('resize', {
             width: document.documentElement.clientWidth,
-            height: document.documentElement.clientHeight
+            height: document.documentElement.clientHeight,
         });
     }
 
@@ -571,7 +619,7 @@ class BaseViewer extends EventEmitter {
             event,
             data,
             viewerName: viewer ? viewer.NAME : '',
-            fileId: file.id
+            fileId: file.id,
         });
     }
 
@@ -585,10 +633,27 @@ class BaseViewer extends EventEmitter {
      * @return {void}
      */
     emitMetric(event, data) {
+        // If this metric has been emitted already and is on the whitelist of metrics
+        // to be emitted only once per session, then do nothing
+        if (this.emittedMetrics[event] && this.getMetricsWhitelist().includes(event)) {
+            return;
+        }
+
+        // Mark that this metric has been emitted
+        this.emittedMetrics[event] = true;
+
         super.emit(VIEWER_EVENT.metric, {
             event,
-            data
+            data,
         });
+    }
+
+    /**
+     * Method which returns the list of metrics to be emitted only once
+     * @return {Array} - the array of metric names to be emitted only once
+     */
+    getMetricsWhitelist() {
+        return [];
     }
 
     /**
@@ -609,9 +674,9 @@ class BaseViewer extends EventEmitter {
             this._pinchScale = {
                 initial: {
                     0: [event.touches[0].clientX, event.touches[0].clientY],
-                    1: [event.touches[1].clientX, event.touches[1].clientY]
+                    1: [event.touches[1].clientX, event.touches[1].clientY],
                 },
-                end: {}
+                end: {},
             };
             this._scaling = true;
             event.preventDefault();
@@ -636,7 +701,7 @@ class BaseViewer extends EventEmitter {
         }
         this._pinchScale.end = {
             0: [event.touches[0].clientX, event.touches[0].clientY],
-            1: [event.touches[1].clientX, event.touches[1].clientY]
+            1: [event.touches[1].clientX, event.touches[1].clientY],
         };
     }
 
@@ -658,13 +723,13 @@ class BaseViewer extends EventEmitter {
                     (this._pinchScale.initial[0][0] - this._pinchScale.initial[1][0]) *
                         (this._pinchScale.initial[0][0] - this._pinchScale.initial[1][0]) +
                         (this._pinchScale.initial[0][1] - this._pinchScale.initial[1][1]) *
-                            (this._pinchScale.initial[0][1] - this._pinchScale.initial[1][1])
+                            (this._pinchScale.initial[0][1] - this._pinchScale.initial[1][1]),
                 );
                 const finalDistance = Math.sqrt(
                     (this._pinchScale.end[0][0] - this._pinchScale.end[1][0]) *
                         (this._pinchScale.end[0][0] - this._pinchScale.end[1][0]) +
                         (this._pinchScale.end[0][1] - this._pinchScale.end[1][1]) *
-                            (this._pinchScale.end[0][1] - this._pinchScale.end[1][1])
+                            (this._pinchScale.end[0][1] - this._pinchScale.end[1][1]),
                 );
                 zoomScale = finalDistance - initialDistance;
             }
@@ -749,12 +814,13 @@ class BaseViewer extends EventEmitter {
     getRepStatus(representation) {
         const { token, sharedLink, sharedLinkPassword, logger, file } = this.options;
         const repStatus = new RepStatus({
+            api: this.api,
             representation: representation || this.options.representation,
             token,
             sharedLink,
             sharedLinkPassword,
             fileId: file.id,
-            logger: representation ? null : logger // Do not log to main preview status if rep is passed in
+            logger: representation ? null : logger, // Do not log to main preview status if rep is passed in
         });
 
         // Don't time out while conversion is pending
@@ -834,33 +900,41 @@ class BaseViewer extends EventEmitter {
     //--------------------------------------------------------------------------
 
     /**
-     * Loads the appropriate annotator and loads the file's annotations
+     * Loads the BoxAnnotations static assets
      *
      * @protected
-     * @return {void}
+     * @return {Promise} promise that is resolved when the assets are loaded
      */
-    loadAnnotator() {
-        // Auto-resolves promise if BoxAnnotations is passed in as a Preview option
-        this.annotationsLoadPromise =
-            window.BoxAnnotations && this.options.boxAnnotations instanceof window.BoxAnnotations
-                ? Promise.resolve()
-                : this.loadAssets([ANNOTATIONS_JS], [ANNOTATIONS_CSS], false);
+    loadBoxAnnotations() {
+        if (
+            !this.areAnnotationsEnabled() ||
+            (window.BoxAnnotations && this.options.boxAnnotations instanceof window.BoxAnnotations)
+        ) {
+            return Promise.resolve();
+        }
+
+        return this.loadAssets([ANNOTATIONS_JS], [ANNOTATIONS_CSS], false);
     }
 
     /**
-     * Fetches the Box Annotations library. Creates an instance of BoxAnnotations
-     * if one isn't passed in to the preview options
+     * Creates an instance of BoxAnnotations if one isn't passed in to the preview options
+     * and instantiates the appropriate annotator
      *
      * @protected
      * @return {void}
      */
-    annotationsLoadHandler() {
+    createAnnotator() {
+        if (!this.areAnnotationsEnabled()) {
+            return;
+        }
+
         // Set viewer-specific annotation options
         const viewerOptions = {};
         viewerOptions[this.options.viewer.NAME] = this.viewerConfig;
 
         if (!global.BoxAnnotations) {
-            const error = new PreviewError(ERROR_CODE.LOAD_ANNOTATIONS);
+            const error = new PreviewError(ERROR_CODE.LOAD_ANNOTATIONS, __('annotations_load_error'), { silent: true });
+            this.previewUI.notification.show(error.displayMessage);
             this.triggerError(error);
             return;
         }
@@ -868,8 +942,22 @@ class BaseViewer extends EventEmitter {
         const boxAnnotations = this.options.boxAnnotations || new global.BoxAnnotations(viewerOptions);
         this.annotatorConf = boxAnnotations.determineAnnotator(this.options, this.viewerConfig);
 
-        if (this.annotatorConf) {
-            this.initAnnotations();
+        if (!this.annotatorConf) {
+            return;
+        }
+
+        const options = boxAnnotations.getOptions && boxAnnotations.getOptions();
+
+        const annotatorOptions = this.createAnnotatorOptions({
+            annotator: this.annotatorConf,
+            intl: (options && options.intl) || intlUtil.createAnnotatorIntl(),
+            modeButtons: ANNOTATION_BUTTONS,
+        });
+
+        this.annotator = new this.annotatorConf.CONSTRUCTOR(annotatorOptions);
+
+        if (this.annotatorPromiseResolver) {
+            this.annotatorPromiseResolver();
         }
     }
 
@@ -880,12 +968,6 @@ class BaseViewer extends EventEmitter {
      * @return {void}
      */
     initAnnotations() {
-        // Construct and init annotator
-        const annotatorOptions = this.createAnnotatorOptions({
-            annotator: this.annotatorConf,
-            modeButtons: ANNOTATION_BUTTONS
-        });
-        this.annotator = new this.annotatorConf.CONSTRUCTOR(annotatorOptions);
         this.annotator.init(this.scale);
 
         // Once the annotator instance has been created, emit it so that clients can attach their events.
@@ -894,18 +976,22 @@ class BaseViewer extends EventEmitter {
 
         // Add a custom listener for entering/exit annotations mode using the app's
         // custom annotations buttons
-        this.addListener('toggleannotationmode', (data) => this.annotator.toggleAnnotationMode(data));
+        this.addListener('toggleannotationmode', data => this.annotator.toggleAnnotationMode(data));
 
         // Add a custom listener for events related to scaling/orientation changes
-        this.addListener('scale', (data) => {
+        this.addListener('scale', data => {
             this.annotator.emit(ANNOTATOR_EVENT.scale, data);
         });
 
         // Add a custom listener to scroll to the specified annotation
-        this.addListener('scrolltoannotation', (data) => this.annotator.scrollToAnnotation(data));
+        this.addListener('scrolltoannotation', data => this.annotator.scrollToAnnotation(data));
 
         // Add a custom listener for events emmited by the annotator
         this.annotator.addListener('annotatorevent', this.handleAnnotatorEvents);
+
+        if (this.areNewAnnotationsEnabled() && this.annotationControls) {
+            this.annotator.addListener('annotations_create', this.handleAnnotationCreateEvent);
+        }
     }
 
     /**
@@ -921,6 +1007,8 @@ class BaseViewer extends EventEmitter {
 
         return !!(
             permissions.can_annotate ||
+            permissions.can_create_annotations ||
+            permissions.can_view_annotations ||
             permissions.can_view_annotations_all ||
             permissions.can_view_annotations_self
         );
@@ -938,6 +1026,13 @@ class BaseViewer extends EventEmitter {
             return false;
         }
 
+        const { showAnnotations, showAnnotationsControls } = this.options;
+
+        // If it's new annotations experience
+        if (showAnnotations && showAnnotationsControls && !this.areNewAnnotationsEnabled()) {
+            return false;
+        }
+
         // Respect viewer-specific annotation option if it is set
         if (
             window.BoxAnnotations &&
@@ -947,7 +1042,7 @@ class BaseViewer extends EventEmitter {
             const { boxAnnotations, viewer } = this.options;
             const annotatorConfig = boxAnnotations.viewerOptions[viewer.NAME];
             this.viewerConfig = {
-                enabled: annotatorConfig && (annotatorConfig.enabled || annotatorConfig.enabledTypes.length > 0)
+                enabled: annotatorConfig && (annotatorConfig.enabled || annotatorConfig.enabledTypes.length > 0),
             };
         } else {
             this.viewerConfig = this.getViewerAnnotationsConfig();
@@ -959,7 +1054,29 @@ class BaseViewer extends EventEmitter {
 
         // Ignore viewer config if BoxAnnotations was pass into Preview as an option
         // Otherwise, use global preview annotation option
-        return !!this.options.showAnnotations;
+        return !!showAnnotations;
+    }
+
+    /**
+     * Returns whether or not new annotations are enabled for this viewer.
+     * If enabled, a new annotations button will show up in toolbar
+     *
+     * @return {boolean} Whether or not viewer enables new annotations
+     */
+    areNewAnnotationsEnabled() {
+        const { showAnnotationsControls, file } = this.options;
+        const { permissions, extension } = file || {};
+
+        if (!this.hasAnnotationPermissions(permissions)) {
+            return false;
+        }
+
+        // Disable new annotations for Excel and iWork formats
+        if (EXCEL_EXTENSIONS.includes(extension) || IWORK_EXTENSIONS.includes(extension)) {
+            return false;
+        }
+
+        return showAnnotationsControls;
     }
 
     /**
@@ -975,7 +1092,7 @@ class BaseViewer extends EventEmitter {
         // Backwards compatability for old boolean flag usage
         if (typeof config === 'boolean') {
             return {
-                enabled: config
+                enabled: config,
             };
         }
         return config;
@@ -997,27 +1114,27 @@ class BaseViewer extends EventEmitter {
                 this.disableViewerControls();
 
                 if (data.data.mode === ANNOTATION_TYPE_POINT) {
-                    this.emit(VIEWER_EVENT.notificationShow, __('notification_annotation_point_mode'));
+                    this.previewUI.notification.show(__('notification_annotation_point_mode'));
                 } else if (data.data.mode === ANNOTATION_TYPE_DRAW) {
-                    this.emit(VIEWER_EVENT.notificationShow, __('notification_annotation_draw_mode'));
+                    this.previewUI.notification.show(__('notification_annotation_draw_mode'));
                     this.previewUI.replaceHeader(data.data.headerSelector);
                 }
                 break;
             case ANNOTATOR_EVENT.modeExit:
                 this.enableViewerControls();
-                this.emit(VIEWER_EVENT.notificationHide);
+                this.previewUI.notification.hide();
 
                 if (data.data.mode === ANNOTATION_TYPE_DRAW) {
                     this.previewUI.replaceHeader(data.data.headerSelector);
                 }
                 break;
             case ANNOTATOR_EVENT.error:
-                this.emit(VIEWER_EVENT.notificationShow, data.data);
+                this.previewUI.notification.show(data.data);
                 break;
             case ANNOTATOR_EVENT.fetch:
                 this.emit('scale', {
                     scale: this.scale,
-                    rotationAngle: this.rotationAngle
+                    rotationAngle: this.rotationAngle,
                 });
                 break;
             default:
@@ -1028,6 +1145,14 @@ class BaseViewer extends EventEmitter {
         this.emit('annotatorevent', data);
     }
 
+    handleAnnotationCreateEvent({ annotation: { id } = {}, meta: { status } = {} }) {
+        // Only on success do we exit create annotation mode. If error occurs,
+        // we remain in create mode
+        if (status === 'success') {
+            this.annotator.emit('annotations_active_set', id);
+        }
+    }
+
     /**
      * Creates combined options to give to the annotator
      *
@@ -1036,43 +1161,77 @@ class BaseViewer extends EventEmitter {
      * @return {Object} combined options
      */
     createAnnotatorOptions(moreOptions) {
-        // Temporary solution for localizing strings in the BoxAnnotations npm package
-        // TODO(@spramod): Remove once BoxAnnotations has it's own localization strategy
         const localizedStrings = {
-            loadError: __('annotations_load_error'),
-            createError: __('annotations_create_error'),
-            deleteError: __('annotations_delete_error'),
-            authError: __('annotations_authorization_error'),
-            doneButton: __('annotation_done'),
-            closeButton: __('annotation_close'),
-            cancelButton: __('annotation_cancel'),
-            saveButton: __('annotation_save'),
-            postButton: __('annotation_post'),
-            deleteButton: __('annotation_delete'),
             addCommentPlaceholder: __('annotation_add_comment_placeholder'),
-            replyPlaceholder: __('annotation_reply_placeholder'),
+            anonymousUserName: __('annotation_anonymous_user_name'),
+            authError: __('annotations_authorization_error'),
+            cancelButton: __('annotation_cancel'),
+            closeButton: __('annotation_close'),
+            createError: __('annotations_create_error'),
+            deleteButton: __('annotation_delete'),
             deleteConfirmation: __('annotation_delete_confirmation_message'),
+            deleteError: __('annotations_delete_error'),
+            doneButton: __('annotation_done'),
+            drawDelete: __('annotation_draw_delete'),
+            drawSave: __('annotation_draw_save'),
+            drawToggle: __('annotation_draw_toggle'),
+            highlightComment: __('annotation_highlight_comment'),
+            highlightToggle: __('annotation_highlight_toggle'),
+            loadError: __('annotations_load_error'),
+            pointToggle: __('annotation_point_toggle'),
+            postButton: __('annotation_post'),
             posting: __('annotation_posting_message'),
             profileAlt: __('annotation_profile_alt'),
-            anonymousUserName: __('annotation_anonymous_user_name'),
-            pointToggle: __('annotation_point_toggle'),
-            highlightToggle: __('annotation_highlight_toggle'),
-            highlightComment: __('annotation_highlight_comment'),
+            replyPlaceholder: __('annotation_reply_placeholder'),
+            saveButton: __('annotation_save'),
+            whoDrew: __('annotation_who_drew'),
             whoHighlighted: __('annotation_who_highlighted'),
-            drawToggle: __('annotation_draw_toggle'),
-            drawSave: __('annotation_draw_save'),
-            drawDelete: __('annotation_draw_delete'),
-            whoDrew: __('annotation_who_drew')
         };
+        return cloneDeep({
+            ...this.options,
+            ...moreOptions,
+            hasTouch: this.hasTouch,
+            isMobile: this.isMobile,
+            locale: this.options.location.locale,
+            localizedStrings,
+        });
+    }
 
-        return cloneDeep(
-            Object.assign({}, this.options, moreOptions, {
-                isMobile: this.isMobile,
-                hasTouch: this.hasTouch,
-                locale: this.options.location.locale,
-                localizedStrings
-            })
-        );
+    /**
+     * Method that is run after all the assets and rep are loaded. In this
+     * base class, it will attempt to load the Box Annotations and create
+     * the annotator
+     *
+     * @return {void}
+     */
+    handleAssetAndRepLoad() {
+        this.loadBoxAnnotations().then(this.createAnnotator);
+    }
+
+    /**
+     * Method to insert the viewer wrapper
+     *
+     * @param {HTMLElement} element Element to be inserted into the DOM
+     * @return {HTMLElement} inserted element
+     */
+    createViewer(element) {
+        if (!element) {
+            return null;
+        }
+
+        const firstChildEl = this.containerEl.firstChild;
+        let addedElement;
+
+        if (!firstChildEl) {
+            addedElement = this.containerEl.appendChild(element);
+        } else {
+            // Need to insert the viewer wrapper as the first element in the container
+            // so that we can perserve the natural stacking context to have the prev/next
+            // file buttons on top of the previewed content
+            addedElement = this.containerEl.insertBefore(element, firstChildEl);
+        }
+
+        return addedElement;
     }
 }
 

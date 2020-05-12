@@ -4,25 +4,22 @@ import BaseViewer from '../BaseViewer';
 import Browser from '../../Browser';
 import RepStatus from '../../RepStatus';
 import PreviewError from '../../PreviewError';
-import DownloadReachability from '../../DownloadReachability';
 import fullscreen from '../../Fullscreen';
+import intl from '../../i18n';
 import * as util from '../../util';
 import * as icons from '../../icons/icons';
 import * as constants from '../../constants';
 import { VIEWER_EVENT, LOAD_METRIC, ERROR_CODE } from '../../events';
+import { EXCEL_EXTENSIONS, IWORK_EXTENSIONS } from '../../extensions';
+import { AnnotationMode } from '../../AnnotationControls';
 import Timer from '../../Timer';
+import Api from '../../api';
 
 let base;
 let containerEl;
 let stubs = {};
 const sandbox = sinon.sandbox.create();
-const ANNOTATOR_EVENT = {
-    modeEnter: 'annotationmodeenter',
-    modeExit: 'annotationmodeexit',
-    fetch: 'annotationsfetched',
-    error: 'annotationerror',
-    scale: 'scaleannotations'
-};
+const { ANNOTATOR_EVENT } = constants;
 
 describe('lib/viewers/BaseViewer', () => {
     before(() => {
@@ -34,15 +31,24 @@ describe('lib/viewers/BaseViewer', () => {
 
         containerEl = document.querySelector('.bp-container');
         stubs.browser = sandbox.stub(Browser, 'isMobile').returns(false);
+        stubs.api = new Api();
         base = new BaseViewer({
+            api: stubs.api,
             container: containerEl,
             file: {
                 id: '0',
                 permissions: {
-                    can_annotate: false
-                }
-            }
+                    can_annotate: false,
+                },
+            },
         });
+        base.previewUI = {
+            replaceHeader: sandbox.stub(),
+            notification: {
+                show: sandbox.stub(),
+                hide: sandbox.stub(),
+            },
+        };
     });
 
     afterEach(() => {
@@ -59,63 +65,65 @@ describe('lib/viewers/BaseViewer', () => {
             sandbox.stub(base, 'addCommonListeners');
             sandbox.stub(base, 'areAnnotationsEnabled').returns(true);
             sandbox.stub(base, 'finishLoadingSetup');
-            sandbox.stub(base, 'loadAnnotator');
+            sandbox.stub(base, 'loadBoxAnnotations').returns(Promise.resolve());
             base.options.showAnnotations = true;
 
             base.setup();
 
             expect(base.options).to.deep.equal({
+                api: stubs.api,
                 container: containerEl,
                 file: {
                     id: '0',
                     permissions: {
-                        can_annotate: false
-                    }
+                        can_annotate: false,
+                    },
                 },
-                showAnnotations: true
+                showAnnotations: true,
             });
 
-            expect(base.containerEl).to.have.class('bp');
+            expect(base.containerEl).to.have.class(constants.CLASS_BOX_PREVIEW_CONTENT);
             expect(base.addCommonListeners).to.be.called;
             expect(getIconFromExtensionStub).to.be.called;
             expect(base.loadTimeout).to.be.a('number');
-            expect(base.loadAnnotator).to.be.called;
+            expect(base.annotatorPromise).to.not.be.undefined;
+            expect(base.annotatorPromiseResolver).to.not.be.undefined;
         });
 
         it('should add a mobile class to the container if on mobile', () => {
             base.isMobile = true;
-            sandbox.stub(base, 'loadAnnotator');
+            sandbox.stub(base, 'loadBoxAnnotations').returns(Promise.resolve());
             sandbox.stub(base, 'finishLoadingSetup');
             sandbox.stub(base, 'areAnnotationsEnabled').returns(true);
 
             base.setup();
 
-            const container = document.querySelector('.bp');
+            const container = document.querySelector(constants.SELECTOR_BOX_PREVIEW);
             expect(container).to.have.class('bp-is-mobile');
         });
 
         it('should not load annotations assets if global preview showAnnotations option is false', () => {
             sandbox.stub(base, 'addCommonListeners');
             sandbox.stub(base, 'areAnnotationsEnabled').returns(false);
-            sandbox.stub(base, 'loadAnnotator');
+            sandbox.stub(base, 'loadBoxAnnotations').returns(Promise.resolve());
             sandbox.stub(base, 'finishLoadingSetup');
             base.options.showAnnotations = false;
 
             base.setup();
 
-            expect(base.loadAnnotator).to.not.be.called;
+            expect(base.loadBoxAnnotations).to.not.be.called;
         });
 
         it('should not load annotations assets if expiring embed is a shared link', () => {
             sandbox.stub(base, 'addCommonListeners');
             sandbox.stub(base, 'areAnnotationsEnabled').returns(true);
-            sandbox.stub(base, 'loadAnnotator');
+            sandbox.stub(base, 'loadBoxAnnotations').returns(Promise.resolve());
             sandbox.stub(base, 'finishLoadingSetup');
             base.options.sharedLink = 'url';
 
             base.setup();
 
-            expect(base.loadAnnotator).to.not.be.called;
+            expect(base.loadBoxAnnotations).to.not.be.called;
         });
     });
 
@@ -123,10 +131,10 @@ describe('lib/viewers/BaseViewer', () => {
         it('should hide the crawler and set the file icon into the icon element', () => {
             const container = {
                 classList: {
-                    add: sandbox.stub()
+                    add: sandbox.stub(),
                 },
                 innerHTML: '',
-                removeEventListener: sandbox.stub()
+                removeEventListener: sandbox.stub(),
             };
             base.fileLoadingIcon = 'icon';
 
@@ -172,7 +180,7 @@ describe('lib/viewers/BaseViewer', () => {
 
         it('should trigger an error if the viewer times out', () => {
             const triggerStub = sandbox.stub(base, 'triggerError');
-            sandbox.stub(window, 'setTimeout').callsFake((func) => func());
+            sandbox.stub(window, 'setTimeout').callsFake(func => func());
 
             base.loaded = false;
             base.destroyed = false;
@@ -188,11 +196,11 @@ describe('lib/viewers/BaseViewer', () => {
     });
 
     describe('startLoadTimer()', () => {
-        it('should start a timer for the fullDocumentLoadTime metric', () => {
+        it('should start a timer for the contentLoadTime metric', () => {
             base.options.file.id = '1234';
             base.startLoadTimer();
 
-            const tag = Timer.createTag(base.options.file.id, LOAD_METRIC.fullDocumentLoadTime);
+            const tag = Timer.createTag(base.options.file.id, LOAD_METRIC.contentLoadTime);
             expect(Timer.get(tag)).to.exist;
         });
     });
@@ -203,6 +211,13 @@ describe('lib/viewers/BaseViewer', () => {
             base.handleAssetError(new Error('test'));
             expect(base.triggerError).to.be.called;
             expect(base.destroyed).to.be.true;
+        });
+
+        it('should use the original error if it is a PreviewError', () => {
+            sandbox.stub(base, 'triggerError');
+            const originalError = new PreviewError('foo', 'bar');
+            base.handleAssetError(originalError);
+            expect(base.triggerError).to.be.calledWith(originalError);
         });
 
         it('should pass along the error if provided', () => {
@@ -220,33 +235,48 @@ describe('lib/viewers/BaseViewer', () => {
     describe('handleDownloadError()', () => {
         beforeEach(() => {
             sandbox.stub(base, 'triggerError');
-            sandbox.stub(DownloadReachability, 'isCustomDownloadHost');
-            sandbox.stub(DownloadReachability, 'setDownloadReachability');
+            sandbox.stub(stubs.api.reachability.constructor, 'isCustomDownloadHost');
+            sandbox.stub(stubs.api.reachability, 'setDownloadReachability');
             sandbox.stub(base, 'load');
             sandbox.stub(base, 'emitMetric');
         });
 
-        it('should trigger an error  if we have already retried', () => {
+        it('should trigger an error if we have already retried', () => {
             base.hasRetriedContentDownload = true;
             base.handleDownloadError('error', 'https://dl.boxcloud.com');
             expect(base.triggerError).to.be.called;
             expect(base.load).to.not.be.called;
         });
 
+        it('should trigger an error if the rep was deleted', () => {
+            base.hasRetriedContentDownload = false;
+            base.handleDownloadError(
+                {
+                    details: {
+                        isRepDeleted: true,
+                    },
+                },
+                'https://dl.boxcloud.com',
+            );
+
+            expect(base.triggerError).to.be.called;
+            expect(base.load).to.not.be.called;
+        });
+
         it('should retry load, and check download reachability if we are on a custom host', () => {
             base.hasRetriedContentDownload = false;
-            DownloadReachability.isCustomDownloadHost.returns(false);
-
+            stubs.api.reachability.constructor.isCustomDownloadHost.returns(false);
+            base.api = stubs.api;
             base.handleDownloadError('error', 'https://dl.boxcloud.com');
             expect(base.load).to.be.called;
-            expect(DownloadReachability.setDownloadReachability).to.be.not.called;
+            expect(stubs.api.reachability.setDownloadReachability).to.be.not.called;
 
             base.hasRetriedContentDownload = false;
             // Now try on a custom host
-            DownloadReachability.isCustomDownloadHost.returns(true);
-            DownloadReachability.setDownloadReachability.returns(Promise.resolve(true));
+            stubs.api.reachability.constructor.isCustomDownloadHost.returns(true);
+            stubs.api.reachability.setDownloadReachability.returns(Promise.resolve(true));
             base.handleDownloadError('error', 'https://dl3.boxcloud.com');
-            expect(DownloadReachability.setDownloadReachability).to.be.called;
+            expect(stubs.api.reachability.setDownloadReachability).to.be.called;
         });
     });
 
@@ -263,6 +293,7 @@ describe('lib/viewers/BaseViewer', () => {
             expect(error).to.be.instanceof(PreviewError);
             expect(error.code).to.equal('error_load_viewer');
             expect(error.message).to.equal('blah');
+            expect(base.emit).to.be.calledWith('error', error);
         });
 
         it('should emit a load viewer error if no error provided', () => {
@@ -281,7 +312,7 @@ describe('lib/viewers/BaseViewer', () => {
             const displayMessage = 'Such a special error!';
             const message = 'Bad things have happened';
             const details = {
-                what: 'what?!'
+                what: 'what?!',
             };
             const err = new PreviewError(code, displayMessage, details, message);
             const stub = sandbox.stub(base, 'emit');
@@ -323,8 +354,8 @@ describe('lib/viewers/BaseViewer', () => {
                 sharedLinkPassword,
                 container: containerEl,
                 file: {
-                    id: '0'
-                }
+                    id: '0',
+                },
             });
             sandbox.stub(util, 'appendAuthParams').returns(url);
 
@@ -351,8 +382,8 @@ describe('lib/viewers/BaseViewer', () => {
                 viewer: { ASSET: 'foo' },
                 container: containerEl,
                 file: {
-                    id: '0'
-                }
+                    id: '0',
+                },
             });
 
             sandbox.spy(util, 'createContentUrl');
@@ -363,11 +394,11 @@ describe('lib/viewers/BaseViewer', () => {
 
         it('should fallback to the default host if we have retried', () => {
             base.hasRetriedContentDownload = true;
-            sandbox.stub(DownloadReachability, 'replaceDownloadHostWithDefault');
+            sandbox.stub(stubs.api.reachability.constructor, 'replaceDownloadHostWithDefault');
             sandbox.stub(util, 'createContentUrl');
-
+            base.api = stubs.api;
             base.createContentUrl('https://dl3.boxcloud.com', '');
-            expect(DownloadReachability.replaceDownloadHostWithDefault).to.be.called;
+            expect(stubs.api.reachability.constructor.replaceDownloadHostWithDefault).to.be.called;
         });
     });
 
@@ -395,8 +426,8 @@ describe('lib/viewers/BaseViewer', () => {
                 sharedLinkPassword,
                 container: containerEl,
                 file: {
-                    id: '0'
-                }
+                    id: '0',
+                },
             });
             sandbox.stub(util, 'getHeaders').returns(headers);
 
@@ -425,12 +456,12 @@ describe('lib/viewers/BaseViewer', () => {
 
         it('should prevent the context menu if preview only permissions', () => {
             base.options.file.permissions = {
-                can_download: false
+                can_download: false,
             };
 
             base.containerEl = {
                 addEventListener: sandbox.stub(),
-                removeEventListener: sandbox.stub()
+                removeEventListener: sandbox.stub(),
             };
 
             base.addCommonListeners();
@@ -446,31 +477,24 @@ describe('lib/viewers/BaseViewer', () => {
 
     describe('viewerLoadHandler()', () => {
         beforeEach(() => {
-            base.annotationsLoadPromise = Promise.resolve();
-            stubs.annotationsLoadHandler = sandbox.stub(base, 'annotationsLoadHandler');
             base.options.representation = {
                 content: {
-                    url_template: 'dl.boxcloud.com'
-                }
+                    url_template: 'dl.boxcloud.com',
+                },
             };
+            base.api = stubs.api;
             stubs.getDownloadNotificationToShow = sandbox
-                .stub(DownloadReachability, 'getDownloadNotificationToShow')
+                .stub(stubs.api.reachability.constructor, 'getDownloadNotificationToShow')
                 .returns(undefined);
+            sandbox.stub(base, 'initAnnotations');
         });
 
         it('should show the notification if downloads are degraded and we have not shown the notification yet', () => {
             stubs.getDownloadNotificationToShow.returns('dl3.boxcloud.com');
-            base.previewUI = {
-                notification: {
-                    show: sandbox.stub()
-                }
-            };
-
-            sandbox.stub(DownloadReachability, 'setDownloadHostNotificationShown');
-
+            sandbox.stub(stubs.api.reachability.constructor, 'setDownloadHostNotificationShown');
             base.viewerLoadHandler({ scale: 1.5 });
             expect(base.previewUI.notification.show).to.be.called;
-            expect(DownloadReachability.setDownloadHostNotificationShown).to.be.called;
+            expect(stubs.api.reachability.constructor.setDownloadHostNotificationShown).to.be.called;
         });
 
         it('should set the scale if it exists', () => {
@@ -478,27 +502,19 @@ describe('lib/viewers/BaseViewer', () => {
             expect(base.scale).to.equal(1.5);
         });
 
-        it('should handle the annotations load promise', () => {
-            base.viewerLoadHandler({ scale: 1.5 });
-            return base.annotationsLoadPromise.then(() => {
-                expect(base.annotationsLoadHandler).to.be.called;
+        it('should show annotations if annotatorPromise exists', done => {
+            base.annotatorPromise = new Promise(resolve => {
+                resolve();
+                done();
             });
+            base.viewerLoadHandler({ scale: 1.5 });
+            expect(base.initAnnotations).to.be.called;
         });
 
-        it('should handle the annotations load promise', () => {
-            stubs.annotationsLoadHandler.callsFake(() => {
-                throw new Error('message');
-            });
-
+        it('should show annotations if annotatorPromise does not exist', () => {
+            base.annotatorPromise = null;
             base.viewerLoadHandler({ scale: 1.5 });
-            return base.annotationsLoadPromise
-                .then(() => {
-                    sinon.assert.failException;
-                })
-                .catch((error) => {
-                    expect(error).to.be.an('error');
-                    expect(error.message).to.equal('message');
-                });
+            expect(base.initAnnotations).to.not.be.called;
         });
     });
 
@@ -510,32 +526,45 @@ describe('lib/viewers/BaseViewer', () => {
         });
     });
 
-    describe('onFullscreenToggled()', () => {
-        beforeEach(() => {
-            base.containerEl = document.createElement('div');
-            sandbox.stub(fullscreen, 'isSupported').returns(false);
-            sandbox.stub(base, 'resize');
-        });
-
-        it('should toggle the fullscreen class', () => {
-            base.onFullscreenToggled();
-            expect(base.containerEl.classList.contains(constants.CLASS_FULLSCREEN)).to.be.true;
-
-            base.onFullscreenToggled();
-            expect(base.containerEl.classList.contains(constants.CLASS_FULLSCREEN)).to.be.false;
-        });
-
-        it('should toggle the unsupported class if the browser does not support the fullscreen API', () => {
-            base.onFullscreenToggled();
-            expect(base.containerEl.classList.contains(constants.CLASS_FULLSCREEN_UNSUPPORTED)).to.be.true;
-
-            base.onFullscreenToggled();
-            expect(base.containerEl.classList.contains(constants.CLASS_FULLSCREEN_UNSUPPORTED)).to.be.false;
-        });
-
+    describe('handleFullscreenEnter()', () => {
         it('should resize the viewer', () => {
-            base.onFullscreenToggled();
+            sandbox.stub(base, 'resize');
+
+            base.handleFullscreenEnter();
+
             expect(base.resize).to.be.called;
+        });
+
+        it('should hide annotations and toggle annotations mode', () => {
+            base.annotator = {
+                emit: sandbox.mock(),
+                toggleAnnotationMode: sandbox.mock(),
+            };
+            base.annotationControls = {
+                resetControls: sandbox.mock(),
+            };
+            sandbox.stub(base, 'areNewAnnotationsEnabled').returns(true);
+
+            base.handleFullscreenEnter();
+
+            expect(base.annotator.emit).to.be.calledWith(ANNOTATOR_EVENT.setVisibility, false);
+            expect(base.annotator.toggleAnnotationMode).to.be.calledWith(AnnotationMode.NONE);
+            expect(base.annotationControls.resetControls).to.be.called;
+        });
+    });
+
+    describe('handleFullscreenExit()', () => {
+        it('should resize the viewer', () => {
+            sandbox.stub(base, 'resize');
+            base.annotator = {
+                emit: sandbox.mock(),
+            };
+            sandbox.stub(base, 'areNewAnnotationsEnabled').returns(true);
+
+            base.handleFullscreenExit();
+
+            expect(base.resize).to.be.called;
+            expect(base.annotator.emit).to.be.calledWith(ANNOTATOR_EVENT.setVisibility, true);
         });
     });
 
@@ -560,12 +589,12 @@ describe('lib/viewers/BaseViewer', () => {
             base.repStatuses = [
                 {
                     removeListener: removeListenerMock,
-                    destroy: destroyMock
+                    destroy: destroyMock,
                 },
                 {
                     removeListener: removeListenerMock,
-                    destroy: destroyMock
-                }
+                    destroy: destroyMock,
+                },
             ];
 
             base.destroy();
@@ -573,7 +602,7 @@ describe('lib/viewers/BaseViewer', () => {
 
         it('should cleanup the base viewer', () => {
             sandbox.stub(base, 'loadAssets').returns(Promise.resolve());
-            sandbox.stub(base, 'loadAnnotator');
+            sandbox.stub(base, 'loadBoxAnnotations').returns(Promise.resolve());
             sandbox.stub(base, 'finishLoadingSetup');
             base.setup();
 
@@ -592,7 +621,7 @@ describe('lib/viewers/BaseViewer', () => {
         it('should clean up annotator', () => {
             base.annotator = {
                 removeAllListeners: sandbox.mock(),
-                destroy: sandbox.mock()
+                destroy: sandbox.mock(),
             };
             base.destroy();
             expect(base.annotator.removeAllListeners).to.be.called;
@@ -603,7 +632,7 @@ describe('lib/viewers/BaseViewer', () => {
             base.preventDefault = sandbox.stub();
             base.containerEl = {
                 addEventListener: sandbox.stub(),
-                removeEventListener: sandbox.stub()
+                removeEventListener: sandbox.stub(),
             };
 
             base.destroy();
@@ -628,9 +657,9 @@ describe('lib/viewers/BaseViewer', () => {
             base = new BaseViewer({
                 viewer: { NAME: viewerName },
                 file: {
-                    id: fileId
+                    id: fileId,
                 },
-                container: containerEl
+                container: containerEl,
             });
 
             const emitStub = sandbox.stub();
@@ -643,7 +672,7 @@ describe('lib/viewers/BaseViewer', () => {
                 event,
                 data,
                 viewerName,
-                fileId
+                fileId,
             });
         });
     });
@@ -655,18 +684,18 @@ describe('lib/viewers/BaseViewer', () => {
             base = new BaseViewer({
                 container: containerEl,
                 file: {
-                    id: '123'
-                }
+                    id: '123',
+                },
             });
             sandbox.stub(base, 'loadAssets').returns(Promise.resolve());
             sandbox.stub(base, 'areAnnotationsEnabled').returns(false);
-            sandbox.stub(base, 'loadAnnotator');
+            sandbox.stub(base, 'loadBoxAnnotations').returns(Promise.resolve());
             sandbox.stub(base, 'finishLoadingSetup');
             base.setup();
             event = {
                 preventDefault: sandbox.stub(),
                 stopPropagation: sandbox.stub(),
-                touches: [0, 0]
+                touches: [0, 0],
             };
             stubs.isIOS = sandbox.stub(Browser, 'isIOS');
             stubs.sqrt = sandbox.stub(Math, 'sqrt');
@@ -772,12 +801,12 @@ describe('lib/viewers/BaseViewer', () => {
                 event.touches = [
                     {
                         clientX: 0,
-                        clientY: 0
+                        clientY: 0,
                     },
                     {
                         clientX: 0,
-                        clientY: 0
-                    }
+                        clientY: 0,
+                    },
                 ];
                 base.mobileZoomChangeHandler(event);
 
@@ -799,12 +828,12 @@ describe('lib/viewers/BaseViewer', () => {
                 event.touches = [
                     {
                         clientX: 0,
-                        clientY: 0
+                        clientY: 0,
                     },
                     {
                         clientX: 0,
-                        clientY: 0
-                    }
+                        clientY: 0,
+                    },
                 ];
                 base.mobileZoomChangeHandler(event);
 
@@ -822,8 +851,8 @@ describe('lib/viewers/BaseViewer', () => {
             const baz = 'captain-america';
             base.options.viewers = {
                 Base: {
-                    fooBar: baz
-                }
+                    fooBar: baz,
+                },
             };
             base.options.viewer = { NAME: 'Base' };
 
@@ -843,7 +872,7 @@ describe('lib/viewers/BaseViewer', () => {
             sandbox.stub(base, 'emit');
             base.options.location = {};
             base.options.viewer = {
-                pauseRequireJS: true
+                pauseRequireJS: true,
             };
         });
 
@@ -895,22 +924,22 @@ describe('lib/viewers/BaseViewer', () => {
         beforeEach(() => {
             base.options.representation = {
                 info: {
-                    url: 'someurl'
-                }
+                    url: 'someurl',
+                },
             };
         });
 
         it('should create a new rep status, save, and return it', () => {
             const repStatus = base.getRepStatus();
-            expect(base.repStatuses.find((status) => status === repStatus)).to.not.be.undefined;
+            expect(base.repStatuses.find(status => status === repStatus)).to.not.be.undefined;
             expect(repStatus).to.be.instanceof(RepStatus);
         });
 
         it('should use the passed in representation', () => {
             const representation = {
                 info: {
-                    url: 'someOtherUrl'
-                }
+                    url: 'someOtherUrl',
+                },
             };
             const repStatus = base.getRepStatus(representation);
             expect(repStatus.representation).to.equal(representation);
@@ -924,7 +953,7 @@ describe('lib/viewers/BaseViewer', () => {
 
             base.loaded = true;
             base.options.viewer = {
-                NAME: 'Error'
+                NAME: 'Error',
             };
 
             expect(base.getLoadStatus()).to.equal('error');
@@ -938,8 +967,8 @@ describe('lib/viewers/BaseViewer', () => {
         it('should return whether the representation has a successful status', () => {
             const representation = {
                 status: {
-                    state: 'success'
-                }
+                    state: 'success',
+                },
             };
             expect(base.isRepresentationReady(representation)).to.be.true;
 
@@ -954,7 +983,7 @@ describe('lib/viewers/BaseViewer', () => {
     describe('disableViewerControls()', () => {
         it('should disable viewer controls', () => {
             base.controls = {
-                disable: sandbox.stub()
+                disable: sandbox.stub(),
             };
             base.disableViewerControls();
             expect(base.controls.disable).to.be.called;
@@ -964,7 +993,7 @@ describe('lib/viewers/BaseViewer', () => {
     describe('enableViewerControls()', () => {
         it('should enable viewer controls', () => {
             base.controls = {
-                enable: sandbox.stub()
+                enable: sandbox.stub(),
             };
             base.enableViewerControls();
             expect(base.controls.enable).to.be.called;
@@ -981,7 +1010,7 @@ describe('lib/viewers/BaseViewer', () => {
     describe('getAssetPath()', () => {
         it('should return the asset path the viewer is/will use for preview representation content', () => {
             base.options.viewer = {
-                ASSET: '1.jpg'
+                ASSET: '1.jpg',
             };
             expect(base.getAssetPath()).to.equal(base.options.viewer.ASSET);
         });
@@ -992,70 +1021,127 @@ describe('lib/viewers/BaseViewer', () => {
         });
     });
 
-    describe('loadAnnotator()', () => {
+    describe('loadBoxAnnotations()', () => {
         const conf = {
             annotationsEnabled: true,
             types: {
                 point: true,
-                highlight: false
-            }
+                highlight: false,
+            },
         };
 
         beforeEach(() => {
-            sandbox.stub(base, 'loadAssets');
+            sandbox.stub(base, 'loadAssets').returns(Promise.resolve());
             window.BoxAnnotations = function BoxAnnotations() {
                 this.determineAnnotator = sandbox.stub().returns(conf);
             };
         });
 
-        it('should resolve the promise if a BoxAnnotations instance was passed into Preview', (done) => {
+        it('should resolve the promise if a BoxAnnotations instance was passed into Preview', () => {
             base.options.boxAnnotations = new window.BoxAnnotations({});
 
-            base.loadAnnotator();
+            base.loadBoxAnnotations();
             expect(base.loadAssets).to.not.be.calledWith(['annotations.js']);
-            base.annotationsLoadPromise.then(() => done());
         });
 
-        it('should load the annotations assets', () => {
-            base.loadAnnotator();
+        it('should load the annotations assets if annotations are enabled true', () => {
+            sandbox.stub(base, 'areAnnotationsEnabled').returns(true);
+            base.loadBoxAnnotations();
             expect(base.loadAssets).to.be.calledWith(['annotations.js'], ['annotations.css'], false);
+        });
+
+        it('should not load the annotations assets if annotations are not enabled', () => {
+            sandbox.stub(base, 'areAnnotationsEnabled').returns(false);
+            base.loadBoxAnnotations();
+            expect(base.loadAssets).to.not.be.called;
         });
     });
 
-    describe('annotationsLoadHandler()', () => {
+    describe('createAnnotator()', () => {
+        const annotatorMock = {};
+        const annotationsOptions = {
+            intl: {
+                language: 'en-US',
+                locale: 'en-US',
+                messages: { test: 'Test Message' },
+            },
+        };
         const conf = {
             annotationsEnabled: true,
             types: {
                 point: true,
-                highlight: false
-            }
+                highlight: false,
+            },
+            CONSTRUCTOR: sandbox.stub().returns(annotatorMock),
         };
 
         beforeEach(() => {
             base.options.viewer = { NAME: 'viewerName' };
+            base.options.location = { locale: 'en-US' };
+            base.options.showAnnotations = true;
             window.BoxAnnotations = function BoxAnnotations() {
                 this.determineAnnotator = sandbox.stub().returns(conf);
+                this.getAnnotationsOptions = sandbox.stub().returns(annotationsOptions);
             };
 
             sandbox.stub(base, 'initAnnotations');
+            sandbox.stub(base, 'emit');
+            sandbox.stub(base, 'triggerError');
         });
 
-        it('should determine the annotator', () => {
-            base.annotationsLoadHandler();
+        it('should not create the annotator if annotations are not enabled', () => {
+            sandbox.stub(base, 'areAnnotationsEnabled').returns(false);
+            base.createAnnotator();
+            expect(base.annotatorConf).to.be.undefined;
+            expect(base.annotator).to.be.undefined;
+        });
+
+        it('should determine and instantiate the annotator', () => {
+            sandbox.stub(base, 'areAnnotationsEnabled').returns(true);
+            base.createAnnotator();
             expect(base.annotatorConf).to.equal(conf);
+            expect(base.annotator).to.equal(annotatorMock);
         });
 
         it('should not instantiate an instance of BoxAnnotations if one is already passed in', () => {
+            sandbox.stub(base, 'areAnnotationsEnabled').returns(true);
             base.options.boxAnnotations = {
-                determineAnnotator: sandbox.stub()
+                determineAnnotator: sandbox.stub().returns(conf),
             };
-            base.annotationsLoadHandler();
+            base.createAnnotator();
             expect(base.options.boxAnnotations.determineAnnotator).to.be.called;
         });
 
-        it('should init annotations if a conf is present', () => {
-            base.annotationsLoadHandler();
-            expect(base.initAnnotations).to.be.called;
+        it('should call createAnnotatorOptions with locale, language, and messages from options', () => {
+            sandbox.stub(base, 'areAnnotationsEnabled').returns(true);
+            sandbox.stub(base, 'createAnnotatorOptions');
+
+            base.options.boxAnnotations = {
+                determineAnnotator: sandbox.stub().returns(conf),
+                getOptions: sandbox.stub().returns(annotationsOptions),
+            };
+
+            base.createAnnotator();
+
+            expect(base.options.boxAnnotations.getOptions).to.be.called;
+            expect(base.createAnnotatorOptions).to.be.calledWith(sinon.match(annotationsOptions));
+        });
+
+        it('should use default intl lib if annotator options not present ', () => {
+            sandbox.stub(base, 'areAnnotationsEnabled').returns(true);
+            sandbox.stub(base, 'createAnnotatorOptions');
+            sandbox.stub(intl, 'createAnnotatorIntl').returns(annotationsOptions.intl);
+
+            base.options.boxAnnotations = {
+                determineAnnotator: sandbox.stub().returns(conf),
+                getOptions: sandbox.stub().returns(undefined),
+            };
+
+            base.createAnnotator();
+
+            expect(base.options.boxAnnotations.getOptions).to.be.called;
+            expect(intl.createAnnotatorIntl).to.be.called;
+            expect(base.createAnnotatorOptions).to.be.calledWith(sinon.match(annotationsOptions));
         });
     });
 
@@ -1065,21 +1151,25 @@ describe('lib/viewers/BaseViewer', () => {
                 container: document,
                 file: {
                     file_version: {
-                        id: 123
-                    }
+                        id: 123,
+                    },
                 },
                 location: {
-                    locale: 'en-US'
-                }
+                    locale: 'en-US',
+                },
             };
             base.scale = 1.5;
             base.annotator = {
                 init: sandbox.stub(),
-                addListener: sandbox.stub()
+                addListener: sandbox.stub(),
             };
             base.annotatorConf = {
-                CONSTRUCTOR: sandbox.stub().returns(base.annotator)
+                CONSTRUCTOR: sandbox.stub().returns(base.annotator),
             };
+            base.annotationControls = {
+                resetControls: sandbox.stub(),
+            };
+            sandbox.stub(base, 'areNewAnnotationsEnabled').returns(true);
         });
 
         it('should initialize the annotator', () => {
@@ -1091,6 +1181,7 @@ describe('lib/viewers/BaseViewer', () => {
             expect(base.addListener).to.be.calledWith('toggleannotationmode', sinon.match.func);
             expect(base.addListener).to.be.calledWith('scale', sinon.match.func);
             expect(base.addListener).to.be.calledWith('scrolltoannotation', sinon.match.func);
+            expect(base.annotator.addListener).to.be.calledWith('annotations_create', base.handleAnnotationCreateEvent);
             expect(base.annotator.addListener).to.be.calledWith('annotatorevent', sinon.match.func);
             expect(base.emit).to.be.calledWith('annotator', base.annotator);
         });
@@ -1106,9 +1197,11 @@ describe('lib/viewers/BaseViewer', () => {
 
     describe('hasAnnotationPermissions()', () => {
         const permissions = {
-            can_annotate: false,
-            can_view_annotations_all: false,
-            can_view_annotations_self: false
+            can_annotate: false, // Old
+            can_create_annotations: false, // New
+            can_view_annotations: false, // New
+            can_view_annotations_all: false, // Old
+            can_view_annotations_self: false, // Old
         };
 
         it('does nothing if file permissions are undefined', () => {
@@ -1117,6 +1210,16 @@ describe('lib/viewers/BaseViewer', () => {
 
         it('should return false if the user can neither annotate nor view all or their own annotations', () => {
             expect(base.hasAnnotationPermissions(permissions)).to.be.false;
+        });
+
+        it('should return true if the user can at least create annotations', () => {
+            permissions.can_create_annotations = true;
+            expect(base.hasAnnotationPermissions(permissions)).to.be.true;
+        });
+
+        it('should return true if the user can at least view annotations', () => {
+            permissions.can_view_annotations = true;
+            expect(base.hasAnnotationPermissions(permissions)).to.be.true;
         });
 
         it('should return true if the user can at least view all annotations', () => {
@@ -1140,13 +1243,20 @@ describe('lib/viewers/BaseViewer', () => {
             stubs.hasPermissions = sandbox.stub(base, 'hasAnnotationPermissions').returns(true);
             base.options.file = {
                 permissions: {
-                    can_annotate: true
-                }
+                    can_annotate: true,
+                },
             };
         });
 
         it('should return false if the user cannot create/view annotations', () => {
             stubs.hasPermissions.returns(false);
+            expect(base.areAnnotationsEnabled()).to.be.false;
+        });
+
+        it('should return false if new annotations is not enabled', () => {
+            base.options.showAnnotationsControls = true;
+            sandbox.stub(base, 'areNewAnnotationsEnabled').returns(false);
+
             expect(base.areAnnotationsEnabled()).to.be.false;
         });
 
@@ -1183,25 +1293,58 @@ describe('lib/viewers/BaseViewer', () => {
 
             // All default types enabled
             boxAnnotations.viewerOptions = {
-                viewerName: { enabled: true }
+                viewerName: { enabled: true },
             };
             expect(base.areAnnotationsEnabled()).to.be.true;
 
             // No specified enabled types
             boxAnnotations.viewerOptions = {
-                viewerName: { enabledTypes: [] }
+                viewerName: { enabledTypes: [] },
             };
             expect(base.areAnnotationsEnabled()).to.be.false;
 
             // Specified types enabled
             boxAnnotations.viewerOptions = {
-                viewerName: { enabledTypes: ['point'] }
+                viewerName: { enabledTypes: ['point'] },
             };
             expect(base.areAnnotationsEnabled()).to.be.true;
 
             // No passed in version of BoxAnnotations
             window.BoxAnnotations = undefined;
             expect(base.areAnnotationsEnabled()).to.be.false;
+        });
+    });
+
+    describe('areNewAnnotationsEnabled()', () => {
+        beforeEach(() => {
+            stubs.hasPermissions = sandbox.stub(base, 'hasAnnotationPermissions').returns(true);
+            base.options.file = {
+                permissions: {
+                    can_annotate: true,
+                },
+            };
+        });
+
+        it('should return false if the user cannot create/view annotations', () => {
+            stubs.hasPermissions.returns(false);
+            expect(base.areNewAnnotationsEnabled()).to.be.false;
+        });
+
+        EXCEL_EXTENSIONS.concat(IWORK_EXTENSIONS).forEach(extension => {
+            it(`should return false if the file is ${extension} format`, () => {
+                base.options.file.extension = extension;
+                base.options.showAnnotationsControls = true;
+                expect(base.areNewAnnotationsEnabled()).to.be.false;
+            });
+        });
+
+        it('should return showAnnotationsControls if file is not excel nor iWork formats', () => {
+            base.options.file.extension = 'pdf';
+            base.options.showAnnotationsControls = true;
+            expect(base.areNewAnnotationsEnabled()).to.be.true;
+
+            base.options.showAnnotationsControls = false;
+            expect(base.areNewAnnotationsEnabled()).to.be.false;
         });
     });
 
@@ -1221,7 +1364,7 @@ describe('lib/viewers/BaseViewer', () => {
         it('should pass through the annotations object if an object', () => {
             const annConfig = {
                 enabled: true,
-                disabledTypes: ['drawing']
+                disabledTypes: ['drawing'],
             };
             sandbox.stub(base, 'getViewerOption').returns(annConfig);
             const config = base.getViewerAnnotationsConfig();
@@ -1236,23 +1379,20 @@ describe('lib/viewers/BaseViewer', () => {
         beforeEach(() => {
             sandbox.stub(base, 'emit');
             base.annotator = {
-                isInAnnotationMode: sandbox.stub()
+                isInAnnotationMode: sandbox.stub(),
             };
             sandbox.stub(base, 'disableViewerControls');
             sandbox.stub(base, 'enableViewerControls');
-            base.previewUI = {
-                replaceHeader: () => {}
-            };
         });
 
         it('should disable controls and show point mode notification on annotationmodeenter', () => {
             const data = {
                 event: ANNOTATOR_EVENT.modeEnter,
-                data: { mode: ANNOTATION_TYPE_POINT }
+                data: { mode: ANNOTATION_TYPE_POINT },
             };
             base.handleAnnotatorEvents(data);
             expect(base.disableViewerControls).to.be.called;
-            expect(base.emit).to.be.calledWith(VIEWER_EVENT.notificationShow, sinon.match.string);
+            expect(base.previewUI.notification.show).to.be.called;
             expect(base.emit).to.be.calledWith(data.event, data.data);
             expect(base.emit).to.be.calledWith('annotatorevent', data);
         });
@@ -1262,12 +1402,12 @@ describe('lib/viewers/BaseViewer', () => {
                 event: ANNOTATOR_EVENT.modeEnter,
                 data: {
                     mode: ANNOTATION_TYPE_DRAW,
-                    headerSelector: '.bp-header'
-                }
+                    headerSelector: '.bp-header',
+                },
             };
             base.handleAnnotatorEvents(data);
             expect(base.disableViewerControls).to.be.called;
-            expect(base.emit).to.be.calledWith(VIEWER_EVENT.notificationShow, sinon.match.string);
+            expect(base.previewUI.notification.show).to.be.called;
             expect(base.emit).to.be.calledWith(data.event, data.data);
             expect(base.emit).to.be.calledWith('annotatorevent', data);
         });
@@ -1276,12 +1416,12 @@ describe('lib/viewers/BaseViewer', () => {
             const data = {
                 event: ANNOTATOR_EVENT.modeExit,
                 data: {
-                    mode: ANNOTATION_TYPE_DRAW
-                }
+                    mode: ANNOTATION_TYPE_DRAW,
+                },
             };
             base.handleAnnotatorEvents(data);
             expect(base.enableViewerControls).to.be.called;
-            expect(base.emit).to.be.calledWith(VIEWER_EVENT.notificationHide);
+            expect(base.previewUI.notification.hide).to.be.called;
             expect(base.emit).to.be.calledWith(data.event, data.data);
             expect(base.emit).to.be.calledWith('annotatorevent', data);
         });
@@ -1290,12 +1430,12 @@ describe('lib/viewers/BaseViewer', () => {
             const data = {
                 event: ANNOTATOR_EVENT.modeExit,
                 data: {
-                    mode: ANNOTATION_TYPE_DRAW
-                }
+                    mode: ANNOTATION_TYPE_DRAW,
+                },
             };
             base.handleAnnotatorEvents(data);
             expect(base.enableViewerControls).to.be.called;
-            expect(base.emit).to.be.calledWith(VIEWER_EVENT.notificationHide);
+            expect(base.previewUI.notification.hide).to.be.called;
             expect(base.emit).to.be.calledWith(data.event, data.data);
             expect(base.emit).to.be.calledWith('annotatorevent', data);
         });
@@ -1303,10 +1443,10 @@ describe('lib/viewers/BaseViewer', () => {
         it('should show a notification on annotationerror', () => {
             const data = {
                 event: ANNOTATOR_EVENT.error,
-                data: 'message'
+                data: 'message',
             };
             base.handleAnnotatorEvents(data);
-            expect(base.emit).to.be.calledWith(VIEWER_EVENT.notificationShow, data.data);
+            expect(base.previewUI.notification.show).to.be.called;
             expect(base.emit).to.be.calledWith(data.event, data.data);
             expect(base.emit).to.be.calledWith('annotatorevent', data);
         });
@@ -1315,12 +1455,12 @@ describe('lib/viewers/BaseViewer', () => {
             base.scale = 1;
             base.rotationAngle = 90;
             const data = {
-                event: ANNOTATOR_EVENT.fetch
+                event: ANNOTATOR_EVENT.fetch,
             };
             base.handleAnnotatorEvents(data);
             expect(base.emit).to.be.calledWith('scale', {
                 scale: base.scale,
-                rotationAngle: base.rotationAngle
+                rotationAngle: base.rotationAngle,
             });
             expect(base.emit).to.be.calledWith(data.event, data.data);
             expect(base.emit).to.be.calledWith('annotatorevent', data);
@@ -1329,7 +1469,7 @@ describe('lib/viewers/BaseViewer', () => {
         it('should only emit annotatorevent when event does not match', () => {
             const data = {
                 event: 'no match',
-                data: 'message'
+                data: 'message',
             };
             base.handleAnnotatorEvents(data);
             expect(base.disableViewerControls).to.not.be.called;
@@ -1337,7 +1477,7 @@ describe('lib/viewers/BaseViewer', () => {
             expect(base.emit).to.not.be.calledWith(VIEWER_EVENT.notificationShow, data.data);
             expect(base.emit).to.not.be.calledWith('scale', {
                 scale: base.scale,
-                rotationAngle: base.rotationAngle
+                rotationAngle: base.rotationAngle,
             });
             expect(base.emit).to.be.calledWith(data.event, data.data);
             expect(base.emit).to.be.calledWith('annotatorevent', data);
@@ -1348,7 +1488,7 @@ describe('lib/viewers/BaseViewer', () => {
         it('should return combined options to give to the annotator', () => {
             base.options = {
                 file: { id: 1 },
-                location: { locale: 'en-US' }
+                location: { locale: 'en-US' },
             };
             base.isMobile = true;
             base.hasTouch = false;
@@ -1361,6 +1501,118 @@ describe('lib/viewers/BaseViewer', () => {
             expect(combinedOptions.location).to.deep.equal({ locale: 'en-US' });
             expect(combinedOptions.randomOption).to.equal('derp');
             expect(combinedOptions.localizedStrings).to.not.be.undefined;
+        });
+    });
+
+    describe('handleAssetAndRepLoad()', () => {
+        it('should load annotations and create the annotator', done => {
+            sandbox.stub(base, 'loadBoxAnnotations').returns(Promise.resolve());
+            sandbox.stub(base, 'createAnnotator').returns(
+                new Promise(resolve => {
+                    resolve();
+                    done();
+                }),
+            );
+
+            base.handleAssetAndRepLoad();
+
+            expect(base.loadBoxAnnotations).to.be.called;
+            expect(base.createAnnotator).to.be.called;
+        });
+    });
+
+    describe('createViewer()', () => {
+        it('should return null if no element is provided', () => {
+            expect(base.createViewer()).to.be.null;
+        });
+
+        it('should append the element if containerEl has no first child', () => {
+            base.containerEl = document.querySelector(constants.SELECTOR_BOX_PREVIEW_CONTENT);
+            const newDiv = document.createElement('div');
+            sandbox.stub(base.containerEl, 'appendChild');
+            base.createViewer(newDiv);
+            expect(base.containerEl.appendChild).to.be.called;
+        });
+
+        it('should insert the provided element before the other children', () => {
+            base.containerEl = document.querySelector(constants.SELECTOR_BOX_PREVIEW_CONTENT);
+            const existingChild = document.createElement('div');
+            existingChild.className = 'existing-child';
+            base.containerEl.appendChild(existingChild);
+
+            sandbox.stub(base.containerEl, 'insertBefore');
+            const newDiv = document.createElement('div');
+            newDiv.className = 'new-div';
+            base.createViewer(newDiv);
+            expect(base.containerEl.insertBefore).to.be.called;
+        });
+    });
+
+    describe('emitMetric()', () => {
+        beforeEach(() => {
+            stubs.emit = sandbox.stub(EventEmitter.prototype, 'emit');
+            stubs.getMetricsWhitelist = sandbox.stub(base, 'getMetricsWhitelist');
+        });
+
+        it('should update the emittedMetrics object when called the first time', () => {
+            base.emittedMetrics = {};
+            stubs.getMetricsWhitelist.returns([]);
+
+            base.emitMetric('foo', 'bar');
+
+            expect(base.emittedMetrics.foo).to.be.true;
+            expect(stubs.emit).to.be.called;
+        });
+
+        it('should be emitted even if not the first time and not whitelisted', () => {
+            base.emittedMetrics = { foo: true };
+            stubs.getMetricsWhitelist.returns([]);
+
+            base.emitMetric('foo', 'bar');
+
+            expect(base.emittedMetrics.foo).to.be.true;
+            expect(stubs.emit).to.be.called;
+        });
+
+        it('should not do anything if it has been emitted before and is whitelisted', () => {
+            base.emittedMetrics = { foo: true };
+            stubs.getMetricsWhitelist.returns(['foo']);
+
+            base.emitMetric('foo', 'bar');
+
+            expect(base.emittedMetrics.foo).to.be.true;
+            expect(stubs.emit).not.to.be.called;
+        });
+    });
+
+    describe('handleAnnotationCreateEvent()', () => {
+        beforeEach(() => {
+            base.annotator = {
+                emit: sandbox.stub(),
+            };
+        });
+
+        const createEvent = status => ({
+            annotation: { id: '123' },
+            meta: {
+                status,
+            },
+        });
+
+        ['error', 'pending'].forEach(status => {
+            it(`should not do anything if status is ${status}`, () => {
+                const event = createEvent(status);
+                base.handleAnnotationCreateEvent(event);
+
+                expect(base.annotator.emit).not.to.be.called;
+            });
+        });
+
+        it('should reset controls if status is success', () => {
+            const event = createEvent('success');
+            base.handleAnnotationCreateEvent(event);
+
+            expect(base.annotator.emit).to.be.calledWith('annotations_active_set', '123');
         });
     });
 });

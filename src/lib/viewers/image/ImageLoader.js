@@ -11,29 +11,36 @@ const VIEWERS = [
         NAME: 'Image',
         CONSTRUCTOR: ImageViewer,
         REP: ORIGINAL_REP_NAME,
-        EXT: ['svg', 'gif']
+        EXT: ['svg', 'gif'],
     },
     {
         NAME: 'MultiImage',
         CONSTRUCTOR: MultiImageViewer,
         REP: 'png',
         EXT: ['tif', 'tiff'],
-        ASSET: '{page}.png'
+        ASSET: '{page}.png',
+    },
+    {
+        NAME: 'MultiImage',
+        CONSTRUCTOR: MultiImageViewer,
+        REP: 'jpg',
+        EXT: ['tif', 'tiff'],
+        ASSET: '{page}.jpg',
     },
     {
         NAME: 'Image',
         CONSTRUCTOR: ImageViewer,
         REP: 'jpg',
-        EXT: ['jpeg', 'jpg'],
-        ASSET: '1.jpg'
+        EXT: ['jpeg', 'jpg', 'cr2', 'crw', 'dng', 'nef', 'raf', 'raw'],
+        ASSET: '1.jpg',
     },
     {
         NAME: 'Image',
         CONSTRUCTOR: ImageViewer,
         REP: 'png',
-        EXT: ['ai', 'bmp', 'dcm', 'eps', 'gif', 'png', 'ps', 'psd', 'svs', 'tga', 'tif', 'tiff'],
-        ASSET: '1.png'
-    }
+        EXT: ['ai', 'bmp', 'dcm', 'eps', 'gif', 'heic', 'png', 'ps', 'psd', 'svs', 'tga', 'tif', 'tiff'],
+        ASSET: '1.png',
+    },
 ];
 
 class ImageLoader extends AssetLoader {
@@ -56,7 +63,7 @@ class ImageLoader extends AssetLoader {
      * @return {Object} The representation to load
      */
     determineRepresentation(file, viewer) {
-        return file.representations.entries.find((entry) => {
+        return file.representations.entries.find(entry => {
             // Do not use the dimensions=1024x1024&paged=false rep that is for document preloading
             if (entry.properties && entry.properties.paged === 'false') {
                 return false;

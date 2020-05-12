@@ -1,8 +1,7 @@
-import Browser from '../../Browser';
 import ImageBaseViewer from './ImageBaseViewer';
 import { ICON_FULLSCREEN_IN, ICON_FULLSCREEN_OUT, ICON_ROTATE_LEFT } from '../../icons/icons';
 import { CLASS_INVISIBLE } from '../../constants';
-import { openContentInsideIframe } from '../../util';
+
 import './Image.scss';
 
 const CSS_CLASS_IMAGE = 'bp-image';
@@ -13,10 +12,11 @@ class ImageViewer extends ImageBaseViewer {
     /** @inheritdoc */
     constructor(options) {
         super(options);
-
+        this.api = options.api;
         this.rotateLeft = this.rotateLeft.bind(this);
         this.updatePannability = this.updatePannability.bind(this);
         this.handleImageDownloadError = this.handleImageDownloadError.bind(this);
+        this.handleAssetAndRepLoad = this.handleAssetAndRepLoad.bind(this);
 
         if (this.isMobile) {
             this.handleOrientationChange = this.handleOrientationChange.bind(this);
@@ -27,10 +27,14 @@ class ImageViewer extends ImageBaseViewer {
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() to set up common layout
         super.setup();
 
-        this.wrapperEl = this.containerEl.appendChild(document.createElement('div'));
+        this.wrapperEl = this.createViewer(document.createElement('div'));
         this.wrapperEl.classList.add(CSS_CLASS_IMAGE);
 
         this.imageEl = this.wrapperEl.appendChild(document.createElement('img'));
@@ -45,10 +49,9 @@ class ImageViewer extends ImageBaseViewer {
     /**
      * Loads an Image.
      *
-     * @return {void}
+     * @return {Promise}
      */
     load() {
-        this.setup();
         super.load();
 
         const { representation, viewer } = this.options;
@@ -58,11 +61,21 @@ class ImageViewer extends ImageBaseViewer {
         this.bindDOMListeners();
         return this.getRepStatus()
             .getPromise()
-            .then(() => {
-                this.startLoadTimer();
-                this.imageEl.src = downloadUrl;
-            })
+            .then(() => this.handleAssetAndRepLoad(downloadUrl))
             .catch(this.handleAssetError);
+    }
+
+    /**
+     * Loads the image to be viewed
+     *
+     * @override
+     * @return {void}
+     */
+    handleAssetAndRepLoad(downloadUrl) {
+        this.startLoadTimer();
+        this.imageEl.src = downloadUrl;
+
+        super.handleAssetAndRepLoad();
     }
 
     /**
@@ -136,12 +149,12 @@ class ImageViewer extends ImageBaseViewer {
         if (isRotated) {
             return {
                 width: height,
-                height: width
+                height: width,
             };
         }
         return {
             width,
-            height
+            height,
         };
     }
 
@@ -166,7 +179,7 @@ class ImageViewer extends ImageBaseViewer {
             ({ width, height } = this.getTransformWidthAndHeight(
                 this.imageEl.offsetWidth,
                 this.imageEl.offsetHeight,
-                isRotated
+                isRotated,
             ));
 
             // Since we are taking offsetWidth, we only need to apply the zoom to the width
@@ -182,7 +195,7 @@ class ImageViewer extends ImageBaseViewer {
 
             const viewport = {
                 width: this.wrapperEl.clientWidth - 2 * IMAGE_PADDING,
-                height: this.wrapperEl.clientHeight - 2 * IMAGE_PADDING
+                height: this.wrapperEl.clientHeight - 2 * IMAGE_PADDING,
             };
             // If the image is overflowing the viewport, figure out by how much
             // Then take that aspect that reduces the image the maximum (hence min ratio) to fit both width and height
@@ -228,7 +241,7 @@ class ImageViewer extends ImageBaseViewer {
         this.emit('zoom', {
             newScale: [newWidth || width, newHeight || height],
             canZoomIn: true,
-            canZoomOut: true
+            canZoomOut: true,
         });
     }
 
@@ -246,9 +259,12 @@ class ImageViewer extends ImageBaseViewer {
             ? width / this.imageEl.getAttribute('originalWidth')
             : height / this.imageEl.getAttribute('originalHeight');
         this.rotationAngle = (this.currentRotationAngle % 3600) % 360;
+        if (this.zoomControls) {
+            this.zoomControls.setCurrentScale(this.scale);
+        }
         this.emit('scale', {
             scale: this.scale,
-            rotationAngle: this.rotationAngle
+            rotationAngle: this.rotationAngle,
         });
     }
 
@@ -266,31 +282,9 @@ class ImageViewer extends ImageBaseViewer {
             __('enter_fullscreen'),
             this.toggleFullscreen,
             'bp-enter-fullscreen-icon',
-            ICON_FULLSCREEN_IN
+            ICON_FULLSCREEN_IN,
         );
         this.controls.add(__('exit_fullscreen'), this.toggleFullscreen, 'bp-exit-fullscreen-icon', ICON_FULLSCREEN_OUT);
-    }
-
-    /**
-     * Prints image using an an iframe.
-     *
-     * @return {void}
-     */
-    print() {
-        this.printframe = openContentInsideIframe(this.imageEl.outerHTML);
-        this.printframe.contentWindow.focus();
-
-        this.printImage = this.printframe.contentDocument.querySelector('img');
-        this.printImage.style.display = 'block';
-        this.printImage.style.margin = '0 auto';
-
-        if (Browser.getName() === 'Explorer' || Browser.getName() === 'Edge') {
-            this.printframe.contentWindow.document.execCommand('print', false, null);
-        } else {
-            this.printframe.contentWindow.print();
-        }
-
-        this.emit('printsuccess');
     }
 
     /**
@@ -317,7 +311,7 @@ class ImageViewer extends ImageBaseViewer {
         const wrapperDimensions = this.wrapperEl.getBoundingClientRect();
         const viewport = {
             width: this.wrapperEl.clientWidth - IMAGE_PADDING,
-            height: this.wrapperEl.clientHeight - IMAGE_PADDING
+            height: this.wrapperEl.clientHeight - IMAGE_PADDING,
         };
 
         if (this.isRotated()) {
@@ -414,7 +408,7 @@ class ImageViewer extends ImageBaseViewer {
         this.rotationAngle = (this.currentRotationAngle % 3600) % 360;
         this.emit('scale', {
             scale: this.scale,
-            rotationAngle: this.rotationAngle
+            rotationAngle: this.rotationAngle,
         });
     }
 }

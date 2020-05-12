@@ -12,8 +12,8 @@ const VIEWERS = [
         NAME: 'Office',
         CONSTRUCTOR: OfficeViewer,
         REP: ORIGINAL_REP_NAME,
-        EXT: ['xlsx']
-    }
+        EXT: ['xlsx', 'xlsm', 'xlsb'],
+    },
 ];
 
 class OfficeLoader extends AssetLoader {

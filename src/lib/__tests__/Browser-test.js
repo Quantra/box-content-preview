@@ -49,10 +49,10 @@ describe('lib/Browser', () => {
                 { Chrome: '... Chrome/57.133 ' },
                 { Safari: '... Safari/57.36' },
                 { Explorer: '... Trident/09.90.90' },
-                { Firefox: '... Firefox/1.1.1' }
+                { Firefox: '... Firefox/1.1.1' },
             ];
 
-            dp.forEach((browser) => {
+            dp.forEach(browser => {
                 const expected = Object.keys(browser)[0];
                 it(`should get ${expected} as name for user agent`, () => {
                     Browser.overrideUserAgent(browser[expected]);
@@ -180,7 +180,7 @@ describe('lib/Browser', () => {
 
         it('should invoke "isTypeSupported" on the media source if there is a Media Source, and can check type', () => {
             global.MediaSource = {
-                isTypeSupported: sandbox.stub()
+                isTypeSupported: sandbox.stub(),
             };
             Browser.canPlayDash();
             expect(global.MediaSource.isTypeSupported).to.be.called;
@@ -208,7 +208,7 @@ describe('lib/Browser', () => {
 
     describe('hasWebGL()', () => {
         const gl = {
-            getExtension: () => {}
+            getExtension: () => {},
         };
         afterEach(() => {
             Browser.clearGLContext();
@@ -217,7 +217,7 @@ describe('lib/Browser', () => {
         it('should return false if the webgl context cannot be created', () => {
             sandbox.stub(document, 'createElement').returns({
                 getContext: () => null,
-                addEventListener: sandbox.stub()
+                addEventListener: sandbox.stub(),
             });
             expect(Browser.hasWebGL()).to.be.false;
         });
@@ -228,7 +228,7 @@ describe('lib/Browser', () => {
             getContextStub.withArgs('experimental-webgl').returns(undefined);
             sandbox.stub(document, 'createElement').returns({
                 getContext: getContextStub,
-                addEventListener: sandbox.stub()
+                addEventListener: sandbox.stub(),
             });
             expect(Browser.hasWebGL()).to.be.false;
         });
@@ -236,7 +236,7 @@ describe('lib/Browser', () => {
         it('should return true if a webgl context can be created', () => {
             sandbox.stub(document, 'createElement').returns({
                 getContext: () => gl,
-                addEventListener: sandbox.stub()
+                addEventListener: sandbox.stub(),
             });
             expect(Browser.hasWebGL()).to.be.true;
             sandbox.restore();
@@ -245,7 +245,7 @@ describe('lib/Browser', () => {
         it('should only create DOM content on the first call to hasWebGL()', () => {
             const create = sandbox.stub(document, 'createElement').returns({
                 getContext: () => gl,
-                addEventListener: sandbox.stub()
+                addEventListener: sandbox.stub(),
             });
             Browser.hasWebGL();
             Browser.hasWebGL();
@@ -258,12 +258,12 @@ describe('lib/Browser', () => {
     describe('clearGLContext()', () => {
         it('should do nothing if a gl context does not exist', () => {
             const gl = {
-                getExtension: sandbox.stub()
+                getExtension: sandbox.stub(),
             };
 
             sandbox.stub(document, 'createElement').returns({
                 getContext: () => gl,
-                addEventListener: () => {}
+                addEventListener: () => {},
             });
 
             // Creation and destruction
@@ -277,12 +277,12 @@ describe('lib/Browser', () => {
 
         it('should invoke "getExtension()" on the gl context to get the WEBGL_lose_context extension', () => {
             const gl = {
-                getExtension: sandbox.stub()
+                getExtension: sandbox.stub(),
             };
 
             sandbox.stub(document, 'createElement').returns({
                 getContext: () => gl,
-                addEventListener: () => {}
+                addEventListener: () => {},
             });
 
             // Creation and destruction
@@ -294,16 +294,16 @@ describe('lib/Browser', () => {
 
         it('should invoke "loseContext()" to clean up the webgl context', () => {
             const loseExt = {
-                loseContext: sandbox.stub()
+                loseContext: sandbox.stub(),
             };
 
             const gl = {
-                getExtension: () => loseExt
+                getExtension: () => loseExt,
             };
 
             sandbox.stub(document, 'createElement').returns({
                 getContext: () => gl,
-                addEventListener: () => {}
+                addEventListener: () => {},
             });
 
             // Creation and destruction
@@ -327,12 +327,12 @@ describe('lib/Browser', () => {
 
         it('should return true if Standard Derivatives is supported', () => {
             const gl = {
-                getExtension: sandbox.stub().returns({})
+                getExtension: sandbox.stub().returns({}),
             };
 
             sandbox.stub(document, 'createElement').returns({
                 getContext: () => gl,
-                addEventListener: () => {}
+                addEventListener: () => {},
             });
 
             const supports = Browser.supportsModel3D();
@@ -341,12 +341,12 @@ describe('lib/Browser', () => {
 
         it('should return false if Standard Derivatives is unsupported', () => {
             const gl = {
-                getExtension: sandbox.stub().returns(null)
+                getExtension: sandbox.stub().returns(null),
             };
 
             sandbox.stub(document, 'createElement').returns({
                 getContext: () => gl,
-                addEventListener: () => {}
+                addEventListener: () => {},
             });
 
             const supports = Browser.supportsModel3D();
@@ -416,10 +416,13 @@ describe('lib/Browser', () => {
             window.externalHost = undefined;
         });
 
-        it('should return false if the browser doesn\'t support downloads, and mobile', () => {
+        it("should return false if the browser doesn't support downloads, and mobile", () => {
             sandbox.stub(Browser, 'isMobile').returns(true);
             window.externalHost = undefined;
-            sandbox.stub(document, 'createElement').withArgs('a').returns({});
+            sandbox
+                .stub(document, 'createElement')
+                .withArgs('a')
+                .returns({});
             const canDownload = Browser.canDownload();
             expect(canDownload).to.be.false;
         });
@@ -427,7 +430,10 @@ describe('lib/Browser', () => {
         it('should return true if the browser does support downloads, and mobile', () => {
             sandbox.stub(Browser, 'isMobile').returns(true);
             window.externalHost = undefined;
-            sandbox.stub(document, 'createElement').withArgs('a').returns({ download: true });
+            sandbox
+                .stub(document, 'createElement')
+                .withArgs('a')
+                .returns({ download: true });
             const canDownload = Browser.canDownload();
             expect(canDownload).to.be.true;
         });
@@ -461,20 +467,6 @@ describe('lib/Browser', () => {
         });
     });
 
-    describe('isMac()', () => {
-        it('should return true if device is a Mac', () => {
-            Browser.overrideUserAgent('(Macintosh; Intel Mac OS X 10_10_4)');
-            const mac = Browser.isMac();
-            expect(mac).to.be.true;
-        });
-
-        it('should return false if device is not a Mac', () => {
-            Browser.overrideUserAgent('(Windows NT 6.1; Win64; x64; rv:47.0)');
-            const mac = Browser.isMac();
-            expect(mac).to.be.false;
-        });
-    });
-
     describe('hasFontIssue()', () => {
         it('should return true if device is on ios and is OS 10.3.XX', () => {
             Browser.overrideUserAgent('iPhone OS 10_3_90 safari/2');
@@ -487,34 +479,14 @@ describe('lib/Browser', () => {
             const hasIssue = Browser.hasFontIssue();
             expect(hasIssue).to.be.false;
         });
-
-        it('should return true if device is a Mac running Safari', () => {
-            Browser.overrideUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_4) AppleWebKit/600.7.12 (KHTML, like Gecko) Version/8.0.7 Safari/600.7.12');
-            const hasIssue = Browser.hasFontIssue();
-            expect(hasIssue).to.be.true;
-        });
-
-        it('should return false if device is a Mac and not on Safari', () => {
-            Browser.overrideUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.90 Safari/537.36');
-            const hasIssue = Browser.hasFontIssue();
-            expect(hasIssue).to.be.false;
-        });
     });
 
     describe('getBrowserInfo()', () => {
         it('should return browser capabilities', () => {
             const browserInfo = Browser.getBrowserInfo();
-            const expectedFields = [
-                'name',
-                'swf',
-                'svg',
-                'mse',
-                'mp3',
-                'dash',
-                'h264'
-            ];
+            const expectedFields = ['name', 'swf', 'svg', 'mse', 'mp3', 'dash', 'h264'];
 
-            expect(expectedFields.every((field) => typeof browserInfo[field] !== 'undefined')).to.be.true;
+            expect(expectedFields.every(field => typeof browserInfo[field] !== 'undefined')).to.be.true;
         });
     });
 });

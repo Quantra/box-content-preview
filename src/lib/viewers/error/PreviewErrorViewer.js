@@ -21,10 +21,14 @@ class PreviewErrorViewer extends BaseViewer {
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() first to set up common layout
         super.setup();
 
-        this.infoEl = this.containerEl.appendChild(document.createElement('div'));
+        this.infoEl = this.createViewer(document.createElement('div'));
         this.infoEl.className = 'bp-error';
 
         this.iconEl = this.infoEl.appendChild(document.createElement('div'));
@@ -65,8 +69,6 @@ class PreviewErrorViewer extends BaseViewer {
      * @return {void}
      */
     load(err) {
-        this.setup();
-
         const error =
             err instanceof PreviewError
                 ? err
@@ -106,7 +108,7 @@ class PreviewErrorViewer extends BaseViewer {
 
         // Log error message - this will be the original error message if available, display message if not
         this.emit(VIEWER_EVENT.load, {
-            error: stripAuthFromString(message)
+            error: stripAuthFromString(message),
         });
     }
 
@@ -134,6 +136,7 @@ class PreviewErrorViewer extends BaseViewer {
     addDownloadButton() {
         this.downloadBtnEl = this.infoEl.appendChild(document.createElement('button'));
         this.downloadBtnEl.className = 'bp-btn bp-btn-primary';
+        this.downloadBtnEl.dataset.testid = 'preview-error-download-btn';
         this.downloadBtnEl.textContent = __('download');
         this.downloadBtnEl.addEventListener('click', this.download);
     }

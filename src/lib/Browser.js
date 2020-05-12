@@ -1,3 +1,5 @@
+import { BROWSERS } from './constants';
+
 const MIME_H264_BASELINE = 'video/mp4; codecs="avc1.42E01E"';
 const MIME_H264_MAIN = 'video/mp4; codecs="avc1.4D401E"';
 const MIME_H264_HIGH = 'video/mp4; codecs="avc1.64001E"';
@@ -36,17 +38,17 @@ class Browser {
         }
 
         if (userAgent.indexOf('Edge/') > 0) {
-            name = 'Edge';
+            name = BROWSERS.EDGE;
         } else if (userAgent.indexOf('OPR/') > 0 || userAgent.indexOf('Opera/') > 0) {
-            name = 'Opera';
+            name = BROWSERS.OPERA;
         } else if (userAgent.indexOf('Chrome/') > 0) {
-            name = 'Chrome';
+            name = BROWSERS.CHROME;
         } else if (userAgent.indexOf('Safari/') > 0) {
-            name = 'Safari';
+            name = BROWSERS.SAFARI;
         } else if (userAgent.indexOf('Trident/') > 0) {
-            name = 'Explorer';
+            name = BROWSERS.INTERNET_EXPLORER;
         } else if (userAgent.indexOf('Firefox/') > 0) {
-            name = 'Firefox';
+            name = BROWSERS.FIREFOX;
         }
 
         return name;
@@ -184,7 +186,7 @@ class Browser {
         if (!gl) {
             const canvas = document.createElement('canvas');
             // Should stop 'Rats! WebGL hit a snag' error when checking WebGL support
-            canvas.addEventListener(EVENT_WEBGL_CONTEXT_LOST, (e) => {
+            canvas.addEventListener(EVENT_WEBGL_CONTEXT_LOST, e => {
                 /* istanbul ignore next */
                 e.preventDefault();
                 /* istanbul ignore next */
@@ -319,26 +321,14 @@ class Browser {
     }
 
     /**
-     * Returns whether or not the device is a laptop/desktop Mac
-     *
-     * @public
-     * @return {boolean} Whether device is a Mac
-     */
-    static isMac() {
-        return /Macintosh; Intel Mac OS X/g.test(userAgent);
-    }
-
-    /**
-     * Returns whether or not the device is running IOS 10.3.x or browser is desktop Safari, both of which have Font
+     * Returns whether or not the device is running IOS 10.3.x, which has Font
      * Ligature rendering issues due to the font loading API.
      *
      * @public
      * @return {boolean} Whether device or browser have font ligature issues
      */
     static hasFontIssue() {
-        return (
-            (Browser.isIOS() && /(?:OS\s)10_3/i.test(userAgent)) || (Browser.isMac() && Browser.getName() === 'Safari')
-        );
+        return Browser.isIOS() && /(?:OS\s)10_3/i.test(userAgent);
     }
 
     /**
@@ -358,8 +348,8 @@ class Browser {
             h264: {
                 baseline: Browser.canPlayH264Baseline(),
                 main: Browser.canPlayH264Main(),
-                high: Browser.canPlayH264High()
-            }
+                high: Browser.canPlayH264High(),
+            },
         };
     }
 }

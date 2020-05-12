@@ -12,6 +12,10 @@ class MarkdownViewer extends PlainTextViewer {
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() first to set up common layout
         super.setup();
 
@@ -99,7 +103,7 @@ class MarkdownViewer extends PlainTextViewer {
             __('enter_fullscreen'),
             this.toggleFullscreen,
             'bp-enter-fullscreen-icon',
-            ICON_FULLSCREEN_IN
+            ICON_FULLSCREEN_IN,
         );
         this.controls.add(__('exit_fullscreen'), this.toggleFullscreen, 'bp-exit-fullscreen-icon', ICON_FULLSCREEN_OUT);
     }
@@ -138,7 +142,7 @@ class MarkdownViewer extends PlainTextViewer {
 
                 // Use default escaping if no highlighting was successful
                 return '';
-            }
+            },
         });
 
         // Custom renderer for links to add rel="noopener noreferrer"

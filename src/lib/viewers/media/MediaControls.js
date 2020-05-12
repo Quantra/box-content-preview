@@ -13,7 +13,7 @@ const VOLUME_LEVEL_CLASS_NAMES = [
     'bp-media-volume-icon-is-mute',
     'bp-media-volume-icon-is-low',
     'bp-media-volume-icon-is-medium',
-    'bp-media-volume-icon-is-high'
+    'bp-media-volume-icon-is-high',
 ];
 const CRAWLER =
     '<div class="bp-media-crawler-wrapper"><div class="bp-crawler"><div></div><div></div><div></div></div></div>';
@@ -72,7 +72,6 @@ class MediaControls extends EventEmitter {
         this.togglePlay = this.togglePlay.bind(this);
         this.toggleMute = this.toggleMute.bind(this);
         this.toggleFullscreen = this.toggleFullscreen.bind(this);
-        this.toggleFullscreenIcon = this.toggleFullscreenIcon.bind(this);
         this.toggleSettings = this.toggleSettings.bind(this);
         this.toggleSubtitles = this.toggleSubtitles.bind(this);
         this.setFilmstrip = this.setFilmstrip.bind(this);
@@ -84,6 +83,8 @@ class MediaControls extends EventEmitter {
         this.handleAutoplay = this.handleAutoplay.bind(this);
         this.handleSubtitle = this.handleSubtitle.bind(this);
         this.handleAudioTrack = this.handleAudioTrack.bind(this);
+        this.handleFullscreenEnter = this.handleFullscreenEnter.bind(this);
+        this.handleFullscreenExit = this.handleFullscreenExit.bind(this);
         this.timeScrubberHandler = this.timeScrubberHandler.bind(this);
 
         this.setDuration(this.mediaEl.duration);
@@ -158,8 +159,7 @@ class MediaControls extends EventEmitter {
         }
 
         if (fullscreen) {
-            fullscreen.removeListener('exit', this.toggleFullscreenIcon);
-            fullscreen.removeListener('enter', this.toggleFullscreenIcon);
+            fullscreen.removeAllListeners();
         }
 
         this.wrapperEl = undefined;
@@ -228,6 +228,26 @@ class MediaControls extends EventEmitter {
     }
 
     /**
+     * Update the fullscreen icon and associated label when entering fullscreen mode.
+     *
+     * @return {void}
+     */
+    handleFullscreenEnter() {
+        this.setLabel(this.fullscreenButtonEl, __('exit_fullscreen'));
+        this.containerEl.classList.add('bp-is-fullscreen');
+    }
+
+    /**
+     * Update the fullscreen icon and associated label when exiting fullscreen mode.
+     *
+     * @return {void}
+     */
+    handleFullscreenExit() {
+        this.setLabel(this.fullscreenButtonEl, __('enter_fullscreen'));
+        this.containerEl.classList.remove('bp-is-fullscreen');
+    }
+
+    /**
      * Attaches settings menu
      *
      * @private
@@ -264,7 +284,7 @@ class MediaControls extends EventEmitter {
             Math.floor(this.mediaEl.duration),
             0,
             0,
-            1
+            1,
         );
         this.setTimeCode(this.mediaEl.currentTime || 0); // This also sets the aria values
         this.timeScrubber.on('valuechange', () => {
@@ -321,7 +341,7 @@ class MediaControls extends EventEmitter {
         this.timecodeEl.textContent = this.formatTime(time || 0);
         this.timeScrubber.setAriaValues(
             Math.floor(time),
-            `${this.timecodeEl.textContent} ${__('of')} ${this.durationEl.textContent}`
+            `${this.timecodeEl.textContent} ${__('of')} ${this.durationEl.textContent}`,
         );
     }
 
@@ -369,22 +389,6 @@ class MediaControls extends EventEmitter {
     toggleFullscreen() {
         this.show();
         this.emit('togglefullscreen');
-    }
-
-    /**
-     * sets the fullscreen icon and associated label when changing fullscreen mode.
-     *
-     * @private
-     * @return {void}
-     */
-    toggleFullscreenIcon() {
-        if (fullscreen.isFullscreen(this.containerEl)) {
-            this.setLabel(this.fullscreenButtonEl, __('exit_fullscreen'));
-            this.containerEl.classList.add('bp-is-fullscreen');
-        } else {
-            this.setLabel(this.fullscreenButtonEl, __('enter_fullscreen'));
-            this.containerEl.classList.remove('bp-is-fullscreen');
-        }
     }
 
     /**
@@ -462,7 +466,7 @@ class MediaControls extends EventEmitter {
      * @return {void}
      */
     updateVolumeIcon(volume) {
-        VOLUME_LEVEL_CLASS_NAMES.forEach((className) => {
+        VOLUME_LEVEL_CLASS_NAMES.forEach(className => {
             this.volButtonEl.classList.remove(className);
         });
         this.volButtonEl.classList.add(VOLUME_LEVEL_CLASS_NAMES[Math.ceil(volume * 3)]);
@@ -602,8 +606,8 @@ class MediaControls extends EventEmitter {
         addActivationListener(this.settingsButtonEl, this.toggleSettingsHandler);
         addActivationListener(this.subtitlesButtonEl, this.toggleSubtitlesHandler);
 
-        fullscreen.addListener('exit', this.toggleFullscreenIcon);
-        fullscreen.addListener('enter', this.toggleFullscreenIcon);
+        fullscreen.addListener('enter', this.handleFullscreenEnter);
+        fullscreen.addListener('exit', this.handleFullscreenExit);
     }
 
     /**
@@ -776,7 +780,7 @@ class MediaControls extends EventEmitter {
      * @return {Function} - the handler function
      */
     timeScrubberHandler(cb) {
-        return (event) => {
+        return event => {
             const { target } = event;
             const { playedEl, convertedEl } = this.timeScrubber;
             if (target === convertedEl || target === playedEl) {
@@ -873,7 +877,7 @@ class MediaControls extends EventEmitter {
             time,
             left,
             top,
-            containerLeft
+            containerLeft,
         };
     }
 
@@ -896,7 +900,7 @@ class MediaControls extends EventEmitter {
             pageX,
             rect.left,
             rect.width,
-            this.filmstripEl.naturalWidth
+            this.filmstripEl.naturalWidth,
         );
 
         this.filmstripEl.style.left = `${filmstripPositions.left}px`;

@@ -5,8 +5,8 @@ import Popup from '../../Popup';
 import { CLASS_HIDDEN } from '../../constants';
 import { getRepresentation } from '../../file';
 import { ICON_PRINT_CHECKMARK } from '../../icons/icons';
-import { get } from '../../util';
 import { VIEWER_EVENT } from '../../events';
+import { getProp } from '../../util';
 
 const LOAD_TIMEOUT_MS = 120000;
 const SAFARI_PRINT_TIMEOUT_MS = 1000; // Wait 1s before trying to print
@@ -35,6 +35,10 @@ class OfficeViewer extends BaseViewer {
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() to set up common layout
         super.setup();
 
@@ -72,7 +76,6 @@ class OfficeViewer extends BaseViewer {
      * @return {void}
      */
     load() {
-        this.setup();
         super.load();
         // Negligible load timer
         this.startLoadTimer();
@@ -128,7 +131,7 @@ class OfficeViewer extends BaseViewer {
      * @return {void}
      */
     initPrint() {
-        this.printPopup = new Popup(this.containerEl);
+        this.printPopup = new Popup(this.rootEl);
 
         const printCheckmark = document.createElement('div');
         printCheckmark.className = `bp-print-check ${CLASS_HIDDEN}`;
@@ -158,8 +161,12 @@ class OfficeViewer extends BaseViewer {
     setupPDFUrl() {
         const { file } = this.options;
         const pdfRep = getRepresentation(file, 'pdf');
-        const { url_template: template } = pdfRep.content;
-        this.pdfUrl = this.createContentUrlWithAuthParams(template);
+        const template = getProp(pdfRep, 'content.url_template');
+
+        // This occurs in the case of .xlsb files where no pdf rep exists
+        if (template) {
+            this.pdfUrl = this.createContentUrlWithAuthParams(template);
+        }
     }
 
     /**
@@ -169,9 +176,15 @@ class OfficeViewer extends BaseViewer {
      * @return {void}
      */
     setupIframe() {
-        const { appHost, apiHost, file, sharedLink, location: { locale } } = this.options;
+        const {
+            appHost,
+            apiHost,
+            file,
+            sharedLink,
+            location: { locale },
+        } = this.options;
         const iframeEl = this.createIframeElement();
-        this.containerEl.appendChild(iframeEl);
+        this.createViewer(iframeEl);
 
         if (this.platformSetup) {
             const formEl = this.createFormElement(apiHost, file.id, sharedLink, locale);
@@ -288,7 +301,7 @@ class OfficeViewer extends BaseViewer {
         // origin for iframe postMessage communications.
         formEl.setAttribute(
             'action',
-            `${EXCEL_ONLINE_EMBED_URL}?ui=${locale}&rs=${locale}&WOPISrc=${WOPISrc}&sc=${JSON.stringify(origin)}`
+            `${EXCEL_ONLINE_EMBED_URL}?ui=${locale}&rs=${locale}&WOPISrc=${WOPISrc}&sc=${JSON.stringify(origin)}`,
         );
         formEl.setAttribute('method', 'POST');
         formEl.setAttribute('target', OFFICE_ONLINE_IFRAME_NAME);
@@ -319,7 +332,7 @@ class OfficeViewer extends BaseViewer {
      * @return {Promise} Promise setting print blob
      */
     fetchPrintBlob(pdfUrl) {
-        return get(pdfUrl, 'blob').then((blob) => {
+        return this.api.get(pdfUrl, { type: 'blob' }).then(blob => {
             this.printBlob = blob;
         });
     }

@@ -1,11 +1,11 @@
 /* eslint-disable no-unused-expressions */
+import Api from '../../../api';
 import Box3DViewer from '../Box3DViewer';
 import Box3DControls from '../Box3DControls';
 import Box3DRenderer from '../Box3DRenderer';
 import BaseViewer from '../../BaseViewer';
 import Browser from '../../../Browser';
 import fullscreen from '../../../Fullscreen';
-import * as util from '../../../util';
 import {
     EVENT_ERROR,
     EVENT_LOAD,
@@ -14,9 +14,10 @@ import {
     EVENT_SHOW_VR_BUTTON,
     EVENT_TOGGLE_FULLSCREEN,
     EVENT_TOGGLE_VR,
-    EVENT_WEBGL_CONTEXT_RESTORED
+    EVENT_WEBGL_CONTEXT_RESTORED,
 } from '../box3DConstants';
 import { VIEWER_EVENT } from '../../../events';
+import { SELECTOR_BOX_PREVIEW_CONTENT } from '../../../constants';
 
 const sandbox = sinon.sandbox.create();
 
@@ -35,39 +36,41 @@ describe('lib/viewers/box3d/Box3DViewer', () => {
         fixture.load('viewers/box3d/__tests__/Box3DViewer-test.html');
         containerEl = document.querySelector('.container');
         stubs.BoxSDK = sandbox.stub(window, 'BoxSDK');
+        stubs.api = new Api();
         box3d = new Box3DViewer({
+            api: stubs.api,
             file: {
                 id: 0,
                 file_version: {
-                    id: 1
-                }
+                    id: 1,
+                },
             },
             container: containerEl,
             representation: {
                 content: {
-                    url_template: 'foo'
-                }
+                    url_template: 'foo',
+                },
             },
             ui: {
-                showLoadingIndicator: () => {}
-            }
+                showLoadingIndicator: () => {},
+            },
         });
 
         Object.defineProperty(BaseViewer.prototype, 'setup', { value: sandbox.mock() });
-        box3d.containerEl = containerEl;
+        box3d.containerEl = document.querySelector(SELECTOR_BOX_PREVIEW_CONTENT);
         box3d.setup();
 
         sandbox.stub(box3d, 'createSubModules');
         box3d.controls = {
             on: () => {},
             removeListener: () => {},
-            destroy: () => {}
+            destroy: () => {},
         };
         box3d.renderer = {
             load: () => Promise.resolve(),
             on: () => {},
             removeListener: () => {},
-            destroy: () => {}
+            destroy: () => {},
         };
 
         box3d.postLoad();
@@ -93,18 +96,18 @@ describe('lib/viewers/box3d/Box3DViewer', () => {
                 file: {
                     id: 0,
                     file_version: {
-                        id: 1
-                    }
+                        id: 1,
+                    },
                 },
                 container: containerEl,
                 representation: {
                     content: {
-                        url_template: 'foo'
-                    }
-                }
+                        url_template: 'foo',
+                    },
+                },
             });
             Object.defineProperty(BaseViewer.prototype, 'setup', { value: sandbox.mock() });
-            box3d.containerEl = containerEl;
+            box3d.containerEl = document.querySelector(SELECTOR_BOX_PREVIEW_CONTENT);
             box3d.setup();
 
             box3d.createSubModules();
@@ -144,7 +147,7 @@ describe('lib/viewers/box3d/Box3DViewer', () => {
             });
         });
 
-        it('should not attach handlers to controls if controls instance doesn\'t exist', () => {
+        it("should not attach handlers to controls if controls instance doesn't exist", () => {
             const onSpy = sandbox.spy(box3d.controls, 'on');
             // Only checking first method call in block
             onSpy.withArgs(EVENT_TOGGLE_FULLSCREEN);
@@ -193,7 +196,7 @@ describe('lib/viewers/box3d/Box3DViewer', () => {
             });
         });
 
-        it('should not attach handlers to renderer if renderer instance doesn\'t exist', () => {
+        it("should not attach handlers to renderer if renderer instance doesn't exist", () => {
             const onSpy = sandbox.spy(box3d.renderer, 'on');
             // Only checking first method call in block
             onSpy.withArgs(EVENT_SCENE_LOADED);
@@ -357,8 +360,7 @@ describe('lib/viewers/box3d/Box3DViewer', () => {
         });
 
         it('should call renderer.load()', () => {
-            Object.defineProperty(BaseViewer.prototype, 'setup', { value: sandbox.mock() });
-            box3d.containerEl = containerEl;
+            box3d.containerEl = document.querySelector(SELECTOR_BOX_PREVIEW_CONTENT);
             Object.defineProperty(BaseViewer.prototype, 'load', { value: sandbox.mock() });
             sandbox.stub(box3d, 'loadAssets').returns(Promise.resolve());
             sandbox.stub(box3d, 'getRepStatus').returns({ getPromise: () => Promise.resolve() });
@@ -383,7 +385,11 @@ describe('lib/viewers/box3d/Box3DViewer', () => {
         it('should call renderer.load() with the entities.json file and options', () => {
             const contentUrl = 'someEntitiesJsonUrl';
             sandbox.stub(box3d, 'createContentUrl').returns(contentUrl);
-            sandbox.mock(box3d.renderer).expects('load').withArgs(contentUrl, box3d.options).returns(Promise.resolve());
+            sandbox
+                .mock(box3d.renderer)
+                .expects('load')
+                .withArgs(contentUrl, box3d.options)
+                .returns(Promise.resolve());
 
             box3d.postLoad();
         });
@@ -409,14 +415,19 @@ describe('lib/viewers/box3d/Box3DViewer', () => {
             sandbox.stub(box3d, 'createContentUrl').returns(contentUrl);
             sandbox.stub(box3d, 'appendAuthHeader').returns(headers);
             sandbox.stub(box3d, 'isRepresentationReady').returns(true);
-            sandbox.mock(util).expects('get').withArgs(contentUrl, headers, 'any');
-
+            sandbox
+                .mock(stubs.api)
+                .expects('get')
+                .withArgs(contentUrl, { headers, type: 'document' });
             box3d.prefetch({ assets: false, content: true });
         });
 
         it('should not prefetch content if content is true but representation is not ready', () => {
             sandbox.stub(box3d, 'isRepresentationReady').returns(false);
-            sandbox.mock(util).expects('get').never();
+            sandbox
+                .mock(stubs.api)
+                .expects('get')
+                .never();
             box3d.prefetch({ assets: false, content: true });
         });
     });
@@ -424,7 +435,7 @@ describe('lib/viewers/box3d/Box3DViewer', () => {
     describe('toggleFullscreen()', () => {
         it('should call fullscreen.toggle()', () => {
             Object.defineProperty(Object.getPrototypeOf(fullscreen), 'toggle', {
-                value: sandbox.spy()
+                value: sandbox.spy(),
             });
 
             box3d.toggleFullscreen();
@@ -436,7 +447,7 @@ describe('lib/viewers/box3d/Box3DViewer', () => {
             const toggleSpy = sandbox.spy();
             toggleSpy.withArgs(box3d.containerEl);
             Object.defineProperty(Object.getPrototypeOf(fullscreen), 'toggle', {
-                value: toggleSpy
+                value: toggleSpy,
             });
 
             box3d.toggleFullscreen();
@@ -456,8 +467,8 @@ describe('lib/viewers/box3d/Box3DViewer', () => {
         beforeEach(() => {
             box3d.renderer.box3d = {
                 getVrDisplay: sandbox.stub().returns({
-                    isPresenting: true
-                })
+                    isPresenting: true,
+                }),
             };
             box3d.controls.vrEnabled = false;
         });
@@ -482,7 +493,7 @@ describe('lib/viewers/box3d/Box3DViewer', () => {
 
         it('should not add vr-enabled class to wrapper and not set controls property if on mobile, but VR is not presenting', () => {
             box3d.renderer.box3d.getVrDisplay = sandbox.stub().returns({
-                isPresenting: false
+                isPresenting: false,
             });
             sandbox.stub(Browser, 'isMobile').returns(true);
 
@@ -496,7 +507,7 @@ describe('lib/viewers/box3d/Box3DViewer', () => {
     describe('handleSceneLoaded()', () => {
         let eventNameUsed;
         beforeEach(() => {
-            sandbox.stub(box3d, 'emit').callsFake((eventName) => {
+            sandbox.stub(box3d, 'emit').callsFake(eventName => {
                 eventNameUsed = eventName;
             });
             box3d.controls.addUi = sandbox.stub();
@@ -554,7 +565,7 @@ describe('lib/viewers/box3d/Box3DViewer', () => {
 
     describe('handleContextRestored()', () => {
         it('should call emit() with params ["progressstart"]', () => {
-            const emitStub = sandbox.stub(box3d, 'emit').callsFake((eventName) => {
+            const emitStub = sandbox.stub(box3d, 'emit').callsFake(eventName => {
                 expect(eventName).to.equal(VIEWER_EVENT.progressStart);
             });
 

@@ -1,10 +1,12 @@
 import debounce from 'lodash/debounce';
+import isEmpty from 'lodash/isEmpty';
 import BaseViewer from '../BaseViewer';
 import Browser from '../../Browser';
 import MediaControls from './MediaControls';
 import PreviewError from '../../PreviewError';
+import Timer from '../../Timer';
 import { CLASS_ELEM_KEYBOARD_FOCUS, CLASS_HIDDEN, CLASS_IS_BUFFERING, CLASS_IS_VISIBLE } from '../../constants';
-import { ERROR_CODE, VIEWER_EVENT } from '../../events';
+import { ERROR_CODE, MEDIA_METRIC, MEDIA_METRIC_EVENTS, VIEWER_EVENT } from '../../events';
 import { getProp } from '../../util';
 
 const CSS_CLASS_MEDIA = 'bp-media';
@@ -19,8 +21,24 @@ const TIMESTAMP_UNIT_NAME = 'timestamp';
 const INITIAL_TIME_IN_SECONDS = 0;
 const ONE_MINUTE_IN_SECONDS = 60;
 const ONE_HOUR_IN_SECONDS = 60 * ONE_MINUTE_IN_SECONDS;
+const PLAY_PROMISE_NOT_SUPPORTED = 'play_promise_not_supported';
+const MEDIA_TOKEN_EXPIRE_ERROR = 'PIPELINE_ERROR_READ';
+const MAX_RETRY_TOKEN = 3; // number of times to retry refreshing token for unauthorized error
 
 class MediaBaseViewer extends BaseViewer {
+    /** @property {Object} - Keeps track of the different media metrics */
+    metrics = {
+        [MEDIA_METRIC.bufferFill]: 0,
+        [MEDIA_METRIC.duration]: 0,
+        [MEDIA_METRIC.lagRatio]: 0,
+        [MEDIA_METRIC.seeked]: false,
+        [MEDIA_METRIC.totalBufferLag]: 0,
+        [MEDIA_METRIC.watchLength]: 0,
+    };
+
+    /** @property {number} - Number of times refreshing token has been retried for unauthorized error */
+    retryTokenCount = 0;
+
     /**
      * @inheritdoc
      */
@@ -28,33 +46,45 @@ class MediaBaseViewer extends BaseViewer {
         super(options);
 
         // Bind context for callbacks
+        this.containerClickHandler = this.containerClickHandler.bind(this);
         this.errorHandler = this.errorHandler.bind(this);
-        this.setTimeCode = this.setTimeCode.bind(this);
-        this.progressHandler = this.progressHandler.bind(this);
-        this.updateVolumeIcon = this.updateVolumeIcon.bind(this);
-        this.playingHandler = this.playingHandler.bind(this);
+        this.handleAutoplay = this.handleAutoplay.bind(this);
+        this.handleRate = this.handleRate.bind(this);
+        this.handleTimeupdateFromMediaControls = this.handleTimeupdateFromMediaControls.bind(this);
+        this.loadeddataHandler = this.loadeddataHandler.bind(this);
+        this.mediaendHandler = this.mediaendHandler.bind(this);
         this.pauseHandler = this.pauseHandler.bind(this);
+        this.playingHandler = this.playingHandler.bind(this);
+        this.processBufferFillMetric = this.processBufferFillMetric.bind(this);
+        this.processMetrics = this.processMetrics.bind(this);
+        this.progressHandler = this.progressHandler.bind(this);
         this.resetPlayIcon = this.resetPlayIcon.bind(this);
         this.seekHandler = this.seekHandler.bind(this);
-        this.loadeddataHandler = this.loadeddataHandler.bind(this);
-        this.containerClickHandler = this.containerClickHandler.bind(this);
-        this.handleTimeupdateFromMediaControls = this.handleTimeupdateFromMediaControls.bind(this);
+        this.setTimeCode = this.setTimeCode.bind(this);
         this.setVolume = this.setVolume.bind(this);
-        this.togglePlay = this.togglePlay.bind(this);
+        this.handleLoadStart = this.handleLoadStart.bind(this);
+        this.handleCanPlay = this.handleCanPlay.bind(this);
         this.toggleMute = this.toggleMute.bind(this);
-        this.handleRate = this.handleRate.bind(this);
-        this.handleAutoplay = this.handleAutoplay.bind(this);
-        this.mediaendHandler = this.mediaendHandler.bind(this);
+        this.togglePlay = this.togglePlay.bind(this);
+        this.updateVolumeIcon = this.updateVolumeIcon.bind(this);
+        this.restartPlayback = this.restartPlayback.bind(this);
+
+        window.addEventListener('beforeunload', this.processMetrics);
     }
+
     /**
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() to set up common layout
         super.setup();
 
         // Media Wrapper
-        this.wrapperEl = this.containerEl.appendChild(document.createElement('div'));
+        this.wrapperEl = this.createViewer(document.createElement('div'));
         this.wrapperEl.className = CSS_CLASS_MEDIA;
 
         // Media Container
@@ -109,6 +139,13 @@ class MediaBaseViewer extends BaseViewer {
      * @return {void}
      */
     destroy() {
+        // Attempt to process the playback metrics at whatever point of playback has occurred
+        // before we destroy the viewer
+        this.processMetrics();
+
+        // Best effort to emit current media metrics as page unloads
+        window.removeEventListener('beforeunload', this.processMetrics);
+
         if (this.mediaControls) {
             this.mediaControls.removeAllListeners();
             this.mediaControls.destroy();
@@ -117,16 +154,7 @@ class MediaBaseViewer extends BaseViewer {
         // Try catch is needed due to weird behavior when src is removed
         try {
             if (this.mediaEl) {
-                this.mediaEl.removeEventListener('timeupdate', this.setTimeCode);
-                this.mediaEl.removeEventListener('progress', this.progressHandler);
-                this.mediaEl.removeEventListener('volumechange', this.updateVolumeIcon);
-                this.mediaEl.removeEventListener('playing', this.playingHandler);
-                this.mediaEl.removeEventListener('pause', this.pauseHandler);
-                this.mediaEl.removeEventListener('ended', this.resetPlayIcon);
-                this.mediaEl.removeEventListener('seeked', this.seekHandler);
-                this.mediaEl.removeEventListener('loadeddata', this.loadeddataHandler);
-                this.mediaEl.removeEventListener('error', this.errorHandler);
-
+                this.removeEventListenersForMediaElement();
                 this.removePauseEventListener();
                 this.mediaEl.removeAttribute('src');
                 this.mediaEl.load();
@@ -150,12 +178,13 @@ class MediaBaseViewer extends BaseViewer {
      * @return {Promise} Promise to load representations
      */
     load() {
-        this.setup();
         super.load();
+
+        this.addEventListenersForMediaLoad();
 
         const template = this.options.representation.content.url_template;
         this.mediaUrl = this.createContentUrlWithAuthParams(template);
-        this.mediaEl.addEventListener('loadeddata', this.loadeddataHandler);
+
         this.mediaEl.addEventListener('error', this.errorHandler);
         this.mediaEl.setAttribute('title', this.options.file.name);
 
@@ -171,11 +200,18 @@ class MediaBaseViewer extends BaseViewer {
             .then(() => {
                 this.startLoadTimer();
                 this.mediaEl.src = this.mediaUrl;
-                if (this.isAutoplayEnabled()) {
-                    this.autoplay();
-                }
             })
             .catch(this.handleAssetError);
+    }
+
+    /**
+     * Add event listeners to the media element related to loading of data
+     * @return {void}
+     */
+    addEventListenersForMediaLoad() {
+        this.mediaEl.addEventListener('canplay', this.handleCanPlay);
+        this.mediaEl.addEventListener('loadedmetadata', this.loadeddataHandler);
+        this.mediaEl.addEventListener('loadstart', this.handleLoadStart);
     }
 
     /**
@@ -199,17 +235,34 @@ class MediaBaseViewer extends BaseViewer {
         if (this.destroyed) {
             return;
         }
+
+        // If it's already loaded, this handler should be triggered by refreshing token,
+        // so we want to continue playing from the previous time, and don't need to load UI again.
+        if (this.loaded) {
+            this.play(this.currentTime);
+            this.retryTokenCount = 0;
+            return;
+        }
+
+        this.loadUI();
+
+        if (this.isAutoplayEnabled()) {
+            this.autoplay();
+        }
+
         this.setMediaTime(this.startTimeInSeconds);
+        this.resize();
         this.handleVolume();
+
         this.loaded = true;
         this.emit(VIEWER_EVENT.load);
 
-        this.loadUI();
-        this.resize();
-
         // Make media element visible after resize
         this.showMedia();
-        this.mediaContainerEl.focus();
+
+        if (this.options.autoFocus) {
+            this.mediaContainerEl.focus();
+        }
     }
 
     /**
@@ -220,6 +273,73 @@ class MediaBaseViewer extends BaseViewer {
      */
     showMedia() {
         this.wrapperEl.classList.add(CLASS_IS_VISIBLE);
+    }
+
+    /**
+     * Determain whether is an expired token error
+     *
+     * @protected
+     * @param {Object} details - error details
+     * @return {bool}
+     */
+    isExpiredTokenError({ details }) {
+        return (
+            !isEmpty(details) &&
+            details.error_code === MediaError.MEDIA_ERR_NETWORK &&
+            details.error_message.includes(MEDIA_TOKEN_EXPIRE_ERROR)
+        );
+    }
+
+    /**
+     * Restart playback using new token
+     *
+     * @protected
+     * @param {string} newToken - new token
+     * @return {void}
+     */
+    restartPlayback(newToken) {
+        const { currentTime } = this.mediaEl;
+        this.currentTime = currentTime;
+        this.options.token = newToken;
+        this.mediaUrl = this.createContentUrlWithAuthParams(this.options.representation.content.url_template);
+        this.mediaEl.src = this.mediaUrl;
+    }
+
+    /**
+     * Handle expired token error
+     *
+     * @protected
+     * @param {PreviewError} error
+     * @return {boolean} True if it is a token error and is handled
+     */
+    handleExpiredTokenError(error) {
+        if (this.isExpiredTokenError(error)) {
+            if (this.retryTokenCount >= MAX_RETRY_TOKEN) {
+                const tokenError = new PreviewError(
+                    ERROR_CODE.TOKEN_NOT_VALID,
+                    null,
+                    { silent: true },
+                    'Reach refreshing token limit for unauthorized error.',
+                );
+                this.triggerError(tokenError);
+            } else {
+                this.options
+                    .refreshToken()
+                    .then(this.restartPlayback)
+                    .catch(e => {
+                        const tokenError = new PreviewError(
+                            ERROR_CODE.TOKEN_NOT_VALID,
+                            null,
+                            { silent: true },
+                            e.message,
+                        );
+                        this.triggerError(tokenError);
+                    });
+                this.retryTokenCount += 1;
+            }
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -235,9 +355,13 @@ class MediaBaseViewer extends BaseViewer {
         console.error(err);
 
         const errorCode = getProp(err, 'target.error.code');
-        const errorDetails = errorCode ? { error_code: errorCode } : {};
-
+        const errorMessage = getProp(err, 'target.error.message');
+        const errorDetails = errorCode ? { error_code: errorCode, error_message: errorMessage } : {};
         const error = new PreviewError(ERROR_CODE.LOAD_MEDIA, __('error_refresh'), errorDetails);
+
+        if (this.handleExpiredTokenError(error)) {
+            return;
+        }
 
         if (!this.isLoaded()) {
             this.handleDownloadError(error, this.mediaUrl);
@@ -293,31 +417,28 @@ class MediaBaseViewer extends BaseViewer {
     }
 
     /**
-     * Determines if media should autoplay based on cached settings value.
+     * Handler for autoplay failure
+     * Overridden in child class
+     *
+     * @protected
+     */
+    handleAutoplayFail = () => {};
+
+    /**
+     * Autoplay the media
      *
      * @private
-     * @emits volume
-     * @return {void}
+     * @return {Promise}
      */
     autoplay() {
-        // Play may return a promise depening on browser support. This promise
-        // will resolve when playback starts. If it fails, pause UI should be shown.
-        // https://webkit.org/blog/7734/auto-play-policy-changes-for-macos/
-        const autoPlayPromise = this.mediaEl.play();
-
-        if (autoPlayPromise && typeof autoPlayPromise.then === 'function') {
-            autoPlayPromise
-                .then(() => {
-                    this.handleRate();
-                    this.handleVolume();
-                })
-                .catch(() => {
-                    this.pause();
-                });
-        } else {
-            // Fallback to traditional autoplay tag if play does not return a promise
-            this.mediaEl.autoplay = true;
-        }
+        return this.play().catch(error => {
+            if (error.message === PLAY_PROMISE_NOT_SUPPORTED) {
+                // Fallback to traditional autoplay tag if mediaEl.play does not return a promise
+                this.mediaEl.autoplay = true;
+            } else {
+                this.handleAutoplayFail();
+            }
+        });
     }
 
     /**
@@ -475,6 +596,8 @@ class MediaBaseViewer extends BaseViewer {
      */
     seekHandler() {
         this.hideLoadingIcon();
+
+        this.metrics[MEDIA_METRIC.seeked] = true;
         this.debouncedEmit('seeked', this.mediaEl.currentTime);
     }
 
@@ -486,10 +609,21 @@ class MediaBaseViewer extends BaseViewer {
      * @return {void}
      */
     mediaendHandler() {
+        this.resetPlayIcon();
+
+        this.processMetrics();
+
         if (this.isAutoplayEnabled()) {
             this.emit(VIEWER_EVENT.mediaEndAutoplay);
         }
     }
+
+    /**
+     * Abstract. Must be implemented to process end of playback metrics
+     * @emits MEDIA_METRIC_EVENTS.endPlayback
+     * @return {void}
+     */
+    processMetrics() {}
 
     /**
      * Shows the play button in media content.
@@ -556,7 +690,7 @@ class MediaBaseViewer extends BaseViewer {
      * @param {number} start - start time in seconds
      * @param {number} end - end time in seconds
      * @emits play
-     * @return {void}
+     * @return {Promise}
      */
     play(start, end) {
         const hasValidStart = this.isValidTime(start);
@@ -570,20 +704,29 @@ class MediaBaseViewer extends BaseViewer {
             this.setMediaTime(start);
         }
         if (arguments.length === 0 || hasValidStart) {
-            this.mediaEl.play();
+            // Play may return a promise depending on browser support. This promise
+            // will resolve when playback starts.
+            // https://webkit.org/blog/7734/auto-play-policy-changes-for-macos/
+            const playPromise = this.mediaEl.play();
             this.handleRate();
             this.handleVolume();
+
+            return playPromise && typeof playPromise.then === 'function'
+                ? playPromise
+                : Promise.reject(new Error(PLAY_PROMISE_NOT_SUPPORTED));
         }
+        return Promise.resolve();
     }
 
     /**
      * Pause media
      *
      * @param {number} time - time at which media is paused
+     * @param {boolean} [userInitiated] - True if user input initiated the pause
      * @emits pause
      * @return {void}
      */
-    pause(time) {
+    pause(time, userInitiated = false) {
         const hasValidTime = this.isValidTime(time);
         // Remove eventListener because segment completed playing or user paused manually
         this.removePauseEventListener();
@@ -596,7 +739,9 @@ class MediaBaseViewer extends BaseViewer {
             this.mediaEl.addEventListener('timeupdate', this.pauseListener);
         } else {
             this.mediaEl.pause();
-            this.emit('pause');
+            this.emit('pause', {
+                userInitiated,
+            });
         }
     }
 
@@ -610,7 +755,7 @@ class MediaBaseViewer extends BaseViewer {
         if (this.mediaEl.paused) {
             this.play();
         } else {
-            this.pause();
+            this.pause(undefined, true);
         }
     }
 
@@ -663,15 +808,65 @@ class MediaBaseViewer extends BaseViewer {
      * @return {void}
      */
     addEventListenersForMediaElement() {
-        this.mediaEl.addEventListener('timeupdate', this.setTimeCode);
-        this.mediaEl.addEventListener('progress', this.progressHandler);
-        this.mediaEl.addEventListener('volumechange', this.updateVolumeIcon);
-        this.mediaEl.addEventListener('playing', this.playingHandler);
-        this.mediaEl.addEventListener('pause', this.pauseHandler);
-        this.mediaEl.addEventListener('ended', this.resetPlayIcon);
-        this.mediaEl.addEventListener('seeked', this.seekHandler);
         this.mediaEl.addEventListener('ended', this.mediaendHandler);
+        this.mediaEl.addEventListener('pause', this.pauseHandler);
+        this.mediaEl.addEventListener('playing', this.playingHandler);
+        this.mediaEl.addEventListener('progress', this.progressHandler);
+        this.mediaEl.addEventListener('seeked', this.seekHandler);
+        this.mediaEl.addEventListener('timeupdate', this.setTimeCode);
+        this.mediaEl.addEventListener('volumechange', this.updateVolumeIcon);
     }
+
+    /**
+     * Removes event listeners to the media element
+     * @return {void}
+     */
+    removeEventListenersForMediaElement() {
+        this.mediaEl.removeEventListener('canplay', this.handleCanPlay);
+        this.mediaEl.removeEventListener('ended', this.mediaendHandler);
+        this.mediaEl.removeEventListener('error', this.errorHandler);
+        this.mediaEl.removeEventListener('loadeddata', this.loadeddataHandler);
+        this.mediaEl.removeEventListener('loadstart', this.handleLoadStart);
+        this.mediaEl.removeEventListener('pause', this.pauseHandler);
+        this.mediaEl.removeEventListener('playing', this.playingHandler);
+        this.mediaEl.removeEventListener('progress', this.progressHandler);
+        this.mediaEl.removeEventListener('seeked', this.seekHandler);
+        this.mediaEl.removeEventListener('timeupdate', this.setTimeCode);
+        this.mediaEl.removeEventListener('volumechange', this.updateVolumeIcon);
+    }
+
+    /**
+     * Callback from the 'loadstart' event from the media element. Triggers a timer to measure the initial buffer fill.
+     * @return {void}
+     */
+    handleLoadStart() {
+        const tag = this.createTimerTag(MEDIA_METRIC.bufferFill);
+        Timer.start(tag);
+    }
+
+    /**
+     * Callback from the 'canplay' event from the media element. The first time this event is triggered we
+     * calculate the initial buffer fill time.
+     * @see {@link https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/canplay_event}
+     * @emits MEDIA_METRIC_EVENTS.bufferFill
+     * @return {void}
+     */
+    handleCanPlay() {
+        const tag = this.createTimerTag(MEDIA_METRIC.bufferFill);
+        Timer.stop(tag);
+
+        // Only interested in the first event after 'loadstart' to determine the buffer fill
+        this.mediaEl.removeEventListener('canplay', this.handleCanPlay);
+
+        this.processBufferFillMetric();
+    }
+
+    /**
+     * Abstract. Processes the buffer fill metric which represents the initial buffer time before playback begins
+     * @emits MEDIA_METRIC_EVENTS.bufferFill
+     * @return {void}
+     */
+    processBufferFillMetric() {}
 
     /**
      * Seeks forwards/backwards from current point
@@ -828,7 +1023,7 @@ class MediaBaseViewer extends BaseViewer {
          * @param {string} match - the timestamp substring e.g. 1h, 2m, or 3s
          * @return {number} - the number for the given unit
          */
-        const getValueOfMatch = (match) => {
+        const getValueOfMatch = match => {
             // Strip off unit (h, m, s) and convert to float
             const parsedMatch = parseFloat(match[0].slice(0, -1), 10);
             return Number.isNaN(parsedMatch) ? 0 : parsedMatch;
@@ -847,6 +1042,24 @@ class MediaBaseViewer extends BaseViewer {
         }
 
         return timeInSeconds;
+    }
+
+    /**
+     * Overrides the base method
+     *
+     * @override
+     * @return {Array} - the array of metric names to be emitted only once
+     */
+    getMetricsWhitelist() {
+        return [MEDIA_METRIC_EVENTS.bufferFill, MEDIA_METRIC_EVENTS.endPlayback];
+    }
+
+    /**
+     * Utility to create a Timer tag name
+     * @param {string} tagName - tag name
+     */
+    createTimerTag(tagName) {
+        return Timer.createTag(this.options.file.id, tagName);
     }
 }
 

@@ -1,7 +1,8 @@
 /* eslint-disable no-unused-expressions */
+import BaseViewer from '../../BaseViewer';
 import Controls from '../../../Controls';
 import TextBaseViewer from '../TextBaseViewer';
-import BaseViewer from '../../BaseViewer';
+import ZoomControls from '../../../ZoomControls';
 import * as file from '../../../file';
 import { PERMISSION_DOWNLOAD } from '../../../constants';
 
@@ -21,9 +22,9 @@ describe('lib/viewers/text/TextBaseViewer', () => {
         containerEl = document.querySelector('.container');
         textBase = new TextBaseViewer({
             file: {
-                id: 0
+                id: 0,
             },
-            container: containerEl
+            container: containerEl,
         });
 
         Object.defineProperty(BaseViewer.prototype, 'setup', { value: sandbox.mock() });
@@ -44,7 +45,7 @@ describe('lib/viewers/text/TextBaseViewer', () => {
     describe('destroy()', () => {
         it('should destroy the controls if they exist', () => {
             textBase.controls = {
-                destroy: sandbox.stub()
+                destroy: sandbox.stub(),
             };
 
             textBase.destroy();
@@ -59,6 +60,10 @@ describe('lib/viewers/text/TextBaseViewer', () => {
             textEl = document.createElement('div');
             textEl.className = 'bp-text';
             textBase.containerEl.appendChild(textEl);
+            textBase.zoomControls = {
+                setCurrentScale: sandbox.stub(),
+                removeListener: sandbox.stub(),
+            };
         });
 
         afterEach(() => {
@@ -69,16 +74,19 @@ describe('lib/viewers/text/TextBaseViewer', () => {
             sandbox.stub(textBase, 'emit');
             textBase.zoom();
             expect(textBase.emit).to.be.calledWith('zoom');
+            expect(textBase.zoomControls.setCurrentScale).to.be.calledWith(1.0);
         });
 
         it('should increase font size when zooming in', () => {
             textBase.zoom('in');
             expect(textEl.style.fontSize).to.equal('110%');
+            expect(textBase.zoomControls.setCurrentScale).to.be.calledWith(1.1);
         });
 
         it('should decrease font size when zooming out', () => {
             textBase.zoom('out');
             expect(textEl.style.fontSize).to.equal('90%');
+            expect(textBase.zoomControls.setCurrentScale).to.be.calledWith(0.9);
         });
     });
 
@@ -95,53 +103,77 @@ describe('lib/viewers/text/TextBaseViewer', () => {
     });
 
     describe('load()', () => {
-        it('should add selectable class if user has download permissions', () => {
-            sandbox.stub(file, 'checkPermission').withArgs(textBase.options.file, PERMISSION_DOWNLOAD).returns(true);
+        it('should add selectable/printable classes if user has download permissions', () => {
+            sandbox
+                .stub(file, 'checkPermission')
+                .withArgs(textBase.options.file, PERMISSION_DOWNLOAD)
+                .returns(true);
             textBase.load();
+
+            expect(textBase.containerEl).to.have.class('bp-is-printable');
             expect(textBase.containerEl).to.have.class('bp-is-selectable');
         });
 
-        it('should not add selectable class if disableTextViewer option is true', () => {
-            sandbox.stub(file, 'checkPermission').withArgs(textBase.options.file, PERMISSION_DOWNLOAD).returns(true);
-            sandbox.stub(textBase, 'getViewerOption').withArgs('disableTextLayer').returns(true);
+        it('should not add selectable/printable classes if user does not have download permissions', () => {
+            sandbox
+                .stub(file, 'checkPermission')
+                .withArgs(textBase.options.file, PERMISSION_DOWNLOAD)
+                .returns(false);
+            textBase.load();
+
+            expect(textBase.containerEl).to.not.have.class('bp-is-printable');
+            expect(textBase.containerEl).to.not.have.class('bp-is-selectable');
+        });
+
+        it('should not add selectable/printable classes if disableTextViewer option is true', () => {
+            sandbox
+                .stub(file, 'checkPermission')
+                .withArgs(textBase.options.file, PERMISSION_DOWNLOAD)
+                .returns(true);
+            sandbox
+                .stub(textBase, 'getViewerOption')
+                .withArgs('disableTextLayer')
+                .returns(true);
 
             textBase.load();
 
+            expect(textBase.containerEl).to.not.have.class('bp-is-printable');
             expect(textBase.containerEl).to.not.have.class('bp-is-selectable');
         });
     });
 
     describe('loadUI()', () => {
         const addFunc = Controls.prototype.add;
+        const zoomInitFunc = ZoomControls.prototype.init;
 
         afterEach(() => {
             Object.defineProperty(Controls.prototype, 'add', { value: addFunc });
+            Object.defineProperty(ZoomControls.prototype, 'init', { value: zoomInitFunc });
         });
 
         it('should setup controls and add click handlers', () => {
             Object.defineProperty(Controls.prototype, 'add', { value: sandbox.stub() });
+            Object.defineProperty(ZoomControls.prototype, 'init', { value: sandbox.stub() });
 
             textBase.loadUI();
             expect(textBase.controls instanceof Controls).to.be.true;
-            expect(Controls.prototype.add.callCount).to.equal(4);
-            expect(Controls.prototype.add).to.be.calledWith(
-                sinon.match.string,
-                textBase.zoomOut,
-                sinon.match.string,
-                sinon.match.string
-            );
-            expect(Controls.prototype.add).to.be.calledWith(
-                sinon.match.string,
-                textBase.zoomIn,
-                sinon.match.string,
-                sinon.match.string
-            );
+            expect(Controls.prototype.add.callCount).to.equal(2);
             expect(Controls.prototype.add).to.be.calledWith(
                 sinon.match.string,
                 textBase.toggleFullscreen,
                 sinon.match.string,
-                sinon.match.string
+                sinon.match.string,
             );
+
+            expect(textBase.zoomControls instanceof ZoomControls).to.be.true;
+            expect(ZoomControls.prototype.init).to.be.calledWith(1, {
+                maxZoom: 10,
+                minZoom: 0.1,
+                onZoomIn: textBase.zoomIn,
+                onZoomOut: textBase.zoomOut,
+                zoomInClassName: 'bp-text-zoom-in-icon',
+                zoomOutClassName: 'bp-text-zoom-out-icon',
+            });
         });
     });
 

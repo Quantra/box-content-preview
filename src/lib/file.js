@@ -17,7 +17,7 @@ const FILE_FIELDS = [
     'representations',
     'watermark_info',
     'authenticated_download_url',
-    'is_download_available'
+    'is_download_available',
 ];
 
 /**
@@ -55,7 +55,7 @@ export function getDownloadURL(id, apiHost) {
  * @return {Object|null} Maching representation object or null
  */
 export function getRepresentation(file, repName) {
-    return file.representations.entries.find((entry) => entry.representation === repName) || null;
+    return file.representations.entries.find(entry => entry.representation === repName) || null;
 }
 
 /**
@@ -108,7 +108,7 @@ export function checkFileValid(file) {
         return false;
     }
 
-    return FILE_FIELDS.every((field) => typeof file[field] !== 'undefined');
+    return FILE_FIELDS.every(field => typeof file[field] !== 'undefined');
 }
 
 /**
@@ -120,13 +120,13 @@ export function checkFileValid(file) {
  * @return {Object} File version object normalized to a file object from the API
  */
 export function normalizeFileVersion(fileVersion, fileId) {
-    const file = Object.assign({}, fileVersion);
+    const file = { ...fileVersion };
     file.id = fileId; // ID returned by file versions API is file version ID, so we need to set to file ID
     file.shared_link = {}; // File versions API does not return shared link object
     file.file_version = {
         type: 'file_version',
         id: fileVersion.id,
-        sha1: fileVersion.sha1
+        sha1: fileVersion.sha1,
     };
 
     return file;
@@ -148,7 +148,7 @@ function addOriginalRepresentation(file) {
     }
 
     const queryParams = {
-        preview: 'true'
+        preview: 'true',
     };
 
     if (file.file_version) {
@@ -158,12 +158,12 @@ function addOriginalRepresentation(file) {
     const template = appendQueryParams(file.authenticated_download_url, queryParams);
     file.representations.entries.push({
         content: {
-            url_template: template
+            url_template: template,
         },
         representation: ORIGINAL_REP_NAME,
         status: {
-            state: 'success'
-        }
+            state: 'success',
+        },
     });
 }
 
@@ -178,7 +178,8 @@ function addOriginalRepresentation(file) {
 export function getFileCacheKey({ fileId, fileVersionId }) {
     if (fileId) {
         return `file_${fileId}`;
-    } else if (fileVersionId) {
+    }
+    if (fileVersionId) {
         return `file_version_${fileVersionId}`;
     }
 
@@ -244,7 +245,8 @@ export function uncacheFile(cache, file) {
 export function getCachedFile(cache, { fileId, fileVersionId }) {
     if (fileId && !fileVersionId) {
         return cache.get(getFileCacheKey({ fileId }));
-    } else if (fileVersionId) {
+    }
+    if (fileVersionId) {
         return cache.get(getFileCacheKey({ fileVersionId }));
     }
 

@@ -1,9 +1,10 @@
 import ImageBaseViewer from './ImageBaseViewer';
 import PageControls from '../../PageControls';
-import './MultiImage.scss';
 import { ICON_FULLSCREEN_IN, ICON_FULLSCREEN_OUT } from '../../icons/icons';
-import { CLASS_INVISIBLE } from '../../constants';
+import { CLASS_INVISIBLE, CLASS_MULTI_IMAGE_PAGE, CLASS_IS_SCROLLABLE } from '../../constants';
 import { pageNumberFromScroll } from '../../util';
+
+import './MultiImage.scss';
 
 const PADDING_BUFFER = 100;
 const CSS_CLASS_IMAGE = 'bp-images';
@@ -22,17 +23,25 @@ class MultiImageViewer extends ImageBaseViewer {
         this.scrollHandler = this.scrollHandler.bind(this);
         this.handlePageChangeFromScroll = this.handlePageChangeFromScroll.bind(this);
         this.handleMultiImageDownloadError = this.handleMultiImageDownloadError.bind(this);
+        this.handleAssetAndRepLoad = this.handleAssetAndRepLoad.bind(this);
+        this.finishLoading = this.finishLoading.bind(this);
+        this.updatePannability = this.updatePannability.bind(this);
     }
 
     /**
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() to set up common layout
         super.setup();
 
-        this.wrapperEl = this.containerEl.appendChild(document.createElement('div'));
-        this.wrapperEl.classList.add(CSS_CLASS_IMAGE_WRAPPER);
+        this.wrapperEl = this.createViewer(document.createElement('div'));
+        this.wrapperEl.className = `${CSS_CLASS_IMAGE_WRAPPER} ${CLASS_IS_SCROLLABLE}`;
+        this.wrapperEl.tabIndex = '0';
 
         this.imageEl = this.wrapperEl.appendChild(document.createElement('div'));
         this.imageEl.classList.add(CSS_CLASS_IMAGE);
@@ -71,7 +80,6 @@ class MultiImageViewer extends ImageBaseViewer {
      * @return {Promise} Promise to load bunch of images
      */
     load() {
-        this.setup();
         super.load();
 
         // Hides images until content is loaded
@@ -81,18 +89,39 @@ class MultiImageViewer extends ImageBaseViewer {
 
         return this.getRepStatus()
             .getPromise()
-            .then(() => {
-                const template = this.options.representation.content.url_template;
-                this.imageUrls = this.constructImageUrls(template);
-
-                // Start load timer
-                this.startLoadTimer();
-
-                this.imageUrls.forEach((imageUrl, index) => this.setupImageEls(imageUrl, index));
-
-                this.wrapperEl.addEventListener('scroll', this.scrollHandler, true);
-            })
+            .then(this.handleAssetAndRepLoad)
             .catch(this.handleAssetError);
+    }
+
+    /**
+     * Handles the load event for the first image.
+     *
+     * @return {void}
+     */
+
+    finishLoading() {
+        super.finishLoading();
+        this.setOriginalImageSizes();
+    }
+
+    /**
+     * Loads the multipart image for viewing
+     *
+     * @override
+     * @return {void}
+     */
+    handleAssetAndRepLoad() {
+        const template = this.options.representation.content.url_template;
+        this.imageUrls = this.constructImageUrls(template);
+
+        // Start load timer
+        this.startLoadTimer();
+
+        this.imageUrls.forEach((imageUrl, index) => this.setupImageEls(imageUrl, index));
+
+        this.wrapperEl.addEventListener('scroll', this.scrollHandler, true);
+
+        super.handleAssetAndRepLoad();
     }
 
     /**
@@ -109,7 +138,7 @@ class MultiImageViewer extends ImageBaseViewer {
 
         const urlBase = this.createContentUrlWithAuthParams(template, asset);
         const urls = [];
-        for (let pageNum = 1; pageNum <= this.pagesCount; pageNum++) {
+        for (let pageNum = 1; pageNum <= this.pagesCount; pageNum += 1) {
             urls.push(urlBase.replace('{page}', pageNum));
         }
 
@@ -132,16 +161,21 @@ class MultiImageViewer extends ImageBaseViewer {
 
         // Set page number. Page is index + 1.
         this.singleImageEls[index].setAttribute('data-page-number', index + 1);
-        this.singleImageEls[index].classList.add('page');
-
+        this.singleImageEls[index].classList.add(CLASS_MULTI_IMAGE_PAGE);
         this.singleImageEls[index].src = imageUrl;
     }
 
-    /** @inheritdoc */
-    setOriginalImageSize() {
+    /**
+     * Sets the original image width and height on the img element. Can be removed when
+     * naturalHeight and naturalWidth attributes work correctly in IE 11.
+     *
+     * @protected
+     * @return {Promise} A promise that is resolved if the original image dimensions were set.
+     */
+    setOriginalImageSizes() {
         const promises = [];
 
-        this.singleImageEls.forEach((imageEl) => {
+        this.singleImageEls.forEach(imageEl => {
             promises.push(super.setOriginalImageSize(imageEl));
         });
 
@@ -212,6 +246,9 @@ class MultiImageViewer extends ImageBaseViewer {
         // Grab the first page image dimensions
         const imageEl = this.singleImageEls[0];
         this.scale = width ? width / imageEl.naturalWidth : height / imageEl.naturalHeight;
+        if (this.zoomControls) {
+            this.zoomControls.setCurrentScale(this.scale);
+        }
         this.emit('scale', { scale: this.scale });
     }
 
@@ -223,6 +260,7 @@ class MultiImageViewer extends ImageBaseViewer {
      */
     loadUI() {
         super.loadUI();
+
         this.pageControls = new PageControls(this.controls, this.wrapperEl);
         this.bindPageControlListeners();
     }
@@ -241,7 +279,7 @@ class MultiImageViewer extends ImageBaseViewer {
             __('enter_fullscreen'),
             this.toggleFullscreen,
             'bp-enter-fullscreen-icon',
-            ICON_FULLSCREEN_IN
+            ICON_FULLSCREEN_IN,
         );
         this.controls.add(__('exit_fullscreen'), this.toggleFullscreen, 'bp-exit-fullscreen-icon', ICON_FULLSCREEN_OUT);
     }
@@ -259,6 +297,7 @@ class MultiImageViewer extends ImageBaseViewer {
 
         // Since we're using the src to get the hostname, we can always use the src of the first page
         const { src } = this.singleImageEls[0];
+
         // Clear any images we may have started to load.
         this.singleImageEls = [];
 
@@ -339,10 +378,13 @@ class MultiImageViewer extends ImageBaseViewer {
         }
 
         this.currentPageNumber = pageNumber;
-        this.pageControls.updateCurrentPage(pageNumber);
+
+        if (this.pageControls) {
+            this.pageControls.updateCurrentPage(pageNumber);
+        }
 
         this.emit('pagefocus', {
-            pageNumber
+            pageNumber,
         });
     }
 
@@ -382,7 +424,7 @@ class MultiImageViewer extends ImageBaseViewer {
             this.currentPageNumber,
             this.previousScrollTop,
             this.singleImageEls[this.currentPageNumber - 1],
-            this.wrapperEl
+            this.wrapperEl,
         );
 
         this.updateCurrentPage(pageChange);

@@ -10,8 +10,25 @@ const VIEWERS = [
         NAME: 'Image360',
         CONSTRUCTOR: Image360Viewer,
         REP: '3d',
-        EXT: ['jpg', 'jpeg', 'png', 'ai', 'bmp', 'dcm', 'eps', 'gif', 'ps', 'psd', 'svg', 'svs', 'tga', 'tif', 'tiff']
-    }
+        EXT: [
+            'jpg',
+            'jpeg',
+            'png',
+            'ai',
+            'bmp',
+            'dcm',
+            'eps',
+            'gif',
+            'heic',
+            'ps',
+            'psd',
+            'svg',
+            'svs',
+            'tga',
+            'tif',
+            'tiff',
+        ],
+    },
 ];
 
 class Image360Loader extends Base360Loader {

@@ -1,10 +1,10 @@
 /* eslint-disable no-unused-expressions */
+import Api from '../../../api';
 import BaseViewer from '../../BaseViewer';
 import Browser from '../../../Browser';
 import Location from '../../../Location';
 import OfficeViewer from '../OfficeViewer';
-import * as util from '../../../util';
-import { CLASS_HIDDEN } from '../../../constants';
+import { CLASS_HIDDEN, SELECTOR_BOX_PREVIEW } from '../../../constants';
 import { ICON_PRINT_CHECKMARK } from '../../../icons/icons';
 
 const PRINT_TIMEOUT_MS = 1000; // Wait 1s before trying to print
@@ -13,9 +13,11 @@ const OFFICE_ONLINE_IFRAME_NAME = 'office-online-iframe';
 const EXCEL_ONLINE_URL = 'https://excel.officeapps.live.com/x/_layouts/xlembed.aspx';
 
 const sandbox = sinon.sandbox.create();
+let api;
 let office;
 let stubs = {};
 let containerEl;
+let rootEl;
 
 describe('lib/viewers/office/OfficeViewer', () => {
     let clock;
@@ -28,29 +30,33 @@ describe('lib/viewers/office/OfficeViewer', () => {
     beforeEach(() => {
         fixture.load('viewers/office/__tests__/OfficeViewer-test.html');
         containerEl = document.querySelector('.container');
+        rootEl = document.querySelector(SELECTOR_BOX_PREVIEW);
+        api = new Api();
         office = new OfficeViewer({
+            api,
             container: containerEl,
             file: {
-                id: '123'
+                id: '123',
             },
             viewers: {
                 Office: {
-                    shouldUsePlatformSetup: false
-                }
+                    shouldUsePlatformSetup: false,
+                },
             },
             location: {
-                locale: 'en-US'
+                locale: 'en-US',
             },
             appHost: 'https://app.box.com',
             apiHost: 'https://app.box.com',
-            token: 'token'
+            token: 'token',
         });
         stubs = {
-            setupPDFUrl: sandbox.stub(office, 'setupPDFUrl')
+            setupPDFUrl: sandbox.stub(office, 'setupPDFUrl'),
         };
         clock = sinon.useFakeTimers();
         Object.defineProperty(BaseViewer.prototype, 'setup', { value: sandbox.stub() });
         office.containerEl = containerEl;
+        office.rootEl = rootEl;
     });
 
     afterEach(() => {
@@ -109,13 +115,13 @@ describe('lib/viewers/office/OfficeViewer', () => {
             Object.defineProperty(BaseViewer.prototype, 'load', { value: loadFunc });
         });
 
-        it('should call setup and load the Office viewer', () => {
+        it('should not call setup and load the Office viewer', () => {
             const setupStub = sandbox.stub(office, 'setup');
             Object.defineProperty(BaseViewer.prototype, 'load', { value: sandbox.stub() });
 
             office.load();
 
-            expect(setupStub).to.be.called;
+            expect(setupStub).not.to.be.called;
             expect(BaseViewer.prototype.load).to.be.called;
         });
 
@@ -131,7 +137,7 @@ describe('lib/viewers/office/OfficeViewer', () => {
         beforeEach(() => {
             stubs.createIframeElement = sandbox.spy(office, 'createIframeElement');
             stubs.form = {
-                submit: sandbox.stub()
+                submit: sandbox.stub(),
             };
 
             stubs.createFormElement = sandbox.stub(office, 'createFormElement').returns(stubs.form);
@@ -161,7 +167,7 @@ describe('lib/viewers/office/OfficeViewer', () => {
                 office.options.appHost,
                 office.options.file.id,
                 office.options.sharedLink,
-                office.options.location.locale
+                office.options.location.locale,
             );
             expect(stubs.form.submit).to.be.called;
         });
@@ -178,7 +184,7 @@ describe('lib/viewers/office/OfficeViewer', () => {
             const src = office.setupRunmodeURL(
                 office.options.appHost,
                 office.options.file.id,
-                office.options.sharedLink
+                office.options.sharedLink,
             );
             expect(src).to.equal('https://app.box.com/integrations/officeonline/openExcelOnlinePreviewer?fileId=123');
         });
@@ -188,10 +194,10 @@ describe('lib/viewers/office/OfficeViewer', () => {
             const src = office.setupRunmodeURL(
                 office.options.appHost,
                 office.options.file.id,
-                office.options.sharedLink
+                office.options.sharedLink,
             );
             expect(src).to.equal(
-                'https://app.box.com/integrations/officeonline/openExcelOnlinePreviewer?s=abcd&fileId=123'
+                'https://app.box.com/integrations/officeonline/openExcelOnlinePreviewer?s=abcd&fileId=123',
             );
         });
 
@@ -200,10 +206,10 @@ describe('lib/viewers/office/OfficeViewer', () => {
             const src = office.setupRunmodeURL(
                 office.options.appHost,
                 office.options.file.id,
-                office.options.sharedLink
+                office.options.sharedLink,
             );
             expect(src).to.equal(
-                'https://app.box.com/integrations/officeonline/openExcelOnlinePreviewer?v=test&vanity_subdomain=app&fileId=123'
+                'https://app.box.com/integrations/officeonline/openExcelOnlinePreviewer?v=test&vanity_subdomain=app&fileId=123',
             );
         });
 
@@ -212,10 +218,10 @@ describe('lib/viewers/office/OfficeViewer', () => {
             const src = office.setupRunmodeURL(
                 office.options.appHost,
                 office.options.file.id,
-                office.options.sharedLink
+                office.options.sharedLink,
             );
             expect(src).to.equal(
-                'https://cloud.app.box.com/integrations/officeonline/openExcelOnlinePreviewer?v=test&vanity_subdomain=cloud&fileId=123'
+                'https://cloud.app.box.com/integrations/officeonline/openExcelOnlinePreviewer?v=test&vanity_subdomain=cloud&fileId=123',
             );
         });
 
@@ -224,13 +230,13 @@ describe('lib/viewers/office/OfficeViewer', () => {
             office.options.appHost = 'https://cloud.app.box.com';
             let src = office.setupRunmodeURL(office.options.appHost, office.options.file.id, office.options.sharedLink);
             expect(src).to.equal(
-                'https://app.box.com/integrations/officeonline/openExcelOnlinePreviewer?v=test&vanity_subdomain=app&fileId=123'
+                'https://app.box.com/integrations/officeonline/openExcelOnlinePreviewer?v=test&vanity_subdomain=app&fileId=123',
             );
 
             office.options.sharedLink = 'https://ibm.box.com/s/abcd';
             src = office.setupRunmodeURL(office.options.appHost, office.options.file.id, office.options.sharedLink);
             expect(src).to.equal(
-                'https://ibm.box.com/integrations/officeonline/openExcelOnlinePreviewer?s=abcd&fileId=123'
+                'https://ibm.box.com/integrations/officeonline/openExcelOnlinePreviewer?s=abcd&fileId=123',
             );
 
             office.options.sharedLink = 'https://cloud.box.com/s/abcd';
@@ -238,7 +244,7 @@ describe('lib/viewers/office/OfficeViewer', () => {
 
             src = office.setupRunmodeURL(office.options.appHost, office.options.file.id, office.options.sharedLink);
             expect(src).to.equal(
-                'https://cloud.box.com/integrations/officeonline/openExcelOnlinePreviewer?s=abcd&fileId=123'
+                'https://cloud.box.com/integrations/officeonline/openExcelOnlinePreviewer?s=abcd&fileId=123',
             );
         });
     });
@@ -270,7 +276,7 @@ describe('lib/viewers/office/OfficeViewer', () => {
             expect(iframeEl.height).to.equal('100%');
             expect(iframeEl.frameBorder).to.equal('0');
             expect(iframeEl.getAttribute('sandbox')).to.equal(
-                'allow-scripts allow-same-origin allow-forms allow-popups'
+                'allow-scripts allow-same-origin allow-forms allow-popups',
             );
         });
 
@@ -292,13 +298,13 @@ describe('lib/viewers/office/OfficeViewer', () => {
                 office.options.apiHost,
                 office.options.file.id,
                 office.options.sharedLink,
-                office.options.location.locale
+                office.options.location.locale,
             );
         });
 
         it('should correctly set the action URL', () => {
             expect(stubs.formEl.getAttribute('action')).to.equal(
-                `${EXCEL_ONLINE_URL}?ui=${office.options.location.locale}&rs=${office.options.location.locale}&WOPISrc=src&sc=${stubs.sessionContext}`
+                `${EXCEL_ONLINE_URL}?ui=${office.options.location.locale}&rs=${office.options.location.locale}&WOPISrc=src&sc=${stubs.sessionContext}`,
             );
             expect(stubs.formEl.getAttribute('method')).to.equal('POST');
             expect(stubs.formEl.getAttribute('target')).to.equal(OFFICE_ONLINE_IFRAME_NAME);
@@ -323,7 +329,7 @@ describe('lib/viewers/office/OfficeViewer', () => {
         beforeEach(() => {
             office.printBlob = undefined;
             stubs.fetchPrintBlob = sandbox.stub(office, 'fetchPrintBlob').returns({
-                then: sandbox.stub()
+                then: sandbox.stub(),
             });
             office.initPrint();
             stubs.show = sandbox.stub(office.printPopup, 'show');
@@ -334,7 +340,7 @@ describe('lib/viewers/office/OfficeViewer', () => {
             expect(stubs.fetchPrintBlob).to.be.called;
         });
 
-        it('should directly print if print blob is ready and the print dialog hasn\'t been shown yet', () => {
+        it("should directly print if print blob is ready and the print dialog hasn't been shown yet", () => {
             office.printBlob = {};
             office.printDialogTimeout = setTimeout(() => {});
             sandbox.stub(office, 'browserPrint');
@@ -343,7 +349,7 @@ describe('lib/viewers/office/OfficeViewer', () => {
             expect(office.browserPrint).to.be.called;
         });
 
-        it('should directly print if print blob is ready and the print dialog isn\'t visible', () => {
+        it("should directly print if print blob is ready and the print dialog isn't visible", () => {
             office.printBlob = {};
             office.printDialogTimeout = null;
             sandbox.stub(office.printPopup, 'isVisible').returns(false);
@@ -401,7 +407,7 @@ describe('lib/viewers/office/OfficeViewer', () => {
             stubs.browser = sandbox.stub(Browser, 'getName').returns('Chrome');
             stubs.printResult = {
                 print: sandbox.stub(),
-                addEventListener: sandbox.stub()
+                addEventListener: sandbox.stub(),
             };
             office.printBlob = true;
             window.navigator.msSaveOrOpenBlob = sandbox.stub().returns(true);
@@ -466,18 +472,61 @@ describe('lib/viewers/office/OfficeViewer', () => {
     describe('fetchPrintBlob()', () => {
         beforeEach(() => {
             stubs.promise = Promise.resolve({ blob: 'blob' });
-            stubs.get = sandbox.stub(util, 'get').returns(stubs.promise);
+            stubs.get = sandbox.stub(api, 'get').returns(stubs.promise);
             stubs.appendAuthHeader = sandbox.stub(office, 'appendAuthHeader');
             office.initPrint();
         });
 
         it('should get and return the blob', () => {
+            office.api = api;
+
             office.fetchPrintBlob('url');
 
-            return stubs.promise.then((blob) => {
+            return stubs.promise.then(blob => {
                 expect(stubs.get).to.be.called;
                 expect(blob.blob).to.equal('blob');
             });
+        });
+    });
+
+    describe('setupPDFUrl', () => {
+        beforeEach(() => {
+            sandbox.restore();
+            stubs.createContentUrl = sandbox.stub(office, 'createContentUrlWithAuthParams');
+        });
+
+        it('should not attempt to set pdfUrl if no pdf rep exist', () => {
+            office.options.file.representations = {
+                entries: [],
+            };
+
+            office.setupPDFUrl();
+
+            expect(office.pdfUrl).to.be.undefined;
+            expect(stubs.createContentUrl).not.to.have.been.called;
+        });
+
+        it('should not attempt to set pdfUrl if no content exists', () => {
+            office.options.file.representations = {
+                entries: [{ representation: 'pdf' }],
+            };
+
+            office.setupPDFUrl();
+
+            expect(office.pdfUrl).to.be.undefined;
+            expect(stubs.createContentUrl).not.to.have.been.called;
+        });
+
+        it('should set pdfUrl if pdf rep exists', () => {
+            stubs.createContentUrl.returns('url');
+            office.options.file.representations = {
+                entries: [{ representation: 'pdf', content: { url_template: 'template' } }],
+            };
+
+            office.setupPDFUrl();
+
+            expect(office.pdfUrl).to.equal('url');
+            expect(stubs.createContentUrl).to.have.been.called;
         });
     });
 });

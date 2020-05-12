@@ -30,7 +30,7 @@ describe('lib/Notification', () => {
             assert.equal(notif.notificationEl.className, 'bp-notification bp-is-hidden');
         });
 
-        it('shouldn\'t have any message or button text', () => {
+        it("shouldn't have any message or button text", () => {
             assert.equal(notif.buttonEl.textContext, undefined);
             assert.equal(notif.messageEl.textContext, undefined);
         });
@@ -68,7 +68,7 @@ describe('lib/Notification', () => {
             notif.hide();
             notif.show('test');
             assert.equal(notif.messageEl.textContent, 'test');
-            assert.equal(notif.buttonEl.textContent, __('notification_button_default_text'));
+            assert.equal(notif.buttonEl.children[0].nodeName, 'svg');
         });
 
         it('should hide after the timeout', () => {
@@ -94,7 +94,7 @@ describe('lib/Notification', () => {
     describe('clickHandler()', () => {
         it('should stop propagation of event', () => {
             const event = {
-                stopPropagation: sandbox.stub()
+                stopPropagation: sandbox.stub(),
             };
 
             notif.clickHandler(event);
@@ -107,7 +107,7 @@ describe('lib/Notification', () => {
 
             const event = {
                 stopPropagation: sandbox.stub(),
-                target: notif.notificationEl.querySelector('button')
+                target: notif.notificationEl.querySelector('button'),
             };
 
             notif.clickHandler(event);

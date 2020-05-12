@@ -3,26 +3,28 @@ import shellTemplate from './shell.html';
 import Notification from './Notification';
 import { insertTemplate } from './util';
 import {
-    CLASS_HIDDEN,
-    CLASS_INVISIBLE,
     CLASS_BOX_PREVIEW_BASE_HEADER,
     CLASS_BOX_PREVIEW_HAS_HEADER,
     CLASS_BOX_PREVIEW_HAS_NAVIGATION,
     CLASS_BOX_PREVIEW_HEADER,
     CLASS_BOX_PREVIEW_THEME_DARK,
+    CLASS_HIDDEN,
+    CLASS_INVISIBLE,
     CLASS_PREVIEW_LOADED,
-    SELECTOR_BOX_PREVIEW_CONTAINER,
-    SELECTOR_BOX_PREVIEW,
-    SELECTOR_BOX_PREVIEW_BTN_PRINT,
     SELECTOR_BOX_PREVIEW_BTN_DOWNLOAD,
     SELECTOR_BOX_PREVIEW_BTN_LOADING_DOWNLOAD,
+    SELECTOR_BOX_PREVIEW_BTN_PRINT,
+    SELECTOR_BOX_PREVIEW_CONTAINER,
     SELECTOR_BOX_PREVIEW_CRAWLER_WRAPPER,
+    SELECTOR_BOX_PREVIEW_HEADER_CONTAINER,
     SELECTOR_BOX_PREVIEW_LOADING_TEXT,
     SELECTOR_BOX_PREVIEW_LOADING_WRAPPER,
     SELECTOR_BOX_PREVIEW_LOGO_CUSTOM,
     SELECTOR_BOX_PREVIEW_LOGO_DEFAULT,
+    SELECTOR_BOX_PREVIEW,
     SELECTOR_NAVIGATION_LEFT,
-    SELECTOR_NAVIGATION_RIGHT
+    SELECTOR_NAVIGATION_RIGHT,
+    SELECTOR_BOX_PREVIEW_CONTENT,
 } from './constants';
 
 class PreviewUI {
@@ -44,6 +46,9 @@ class PreviewUI {
     /** @property {Function} - Keydown handler */
     keydownHandler;
 
+    /** @property {HTMLElement} - Preview container element which houses the sidebar and content */
+    previewContainer;
+
     /** @property {ProgressBar} - Progress bar instance */
     progressBar;
 
@@ -58,8 +63,8 @@ class PreviewUI {
             this.progressBar.destroy();
         }
 
-        if (this.contentContainer) {
-            this.contentContainer.removeEventListener('mousemove', this.mousemoveHandler);
+        if (this.previewContainer) {
+            this.previewContainer.removeEventListener('mousemove', this.mousemoveHandler);
         }
 
         if (this.container) {
@@ -108,7 +113,8 @@ class PreviewUI {
         insertTemplate(this.container, shellTemplate);
 
         this.container = this.container.querySelector(SELECTOR_BOX_PREVIEW_CONTAINER);
-        this.contentContainer = this.container.querySelector(SELECTOR_BOX_PREVIEW);
+        this.previewContainer = this.container.querySelector(SELECTOR_BOX_PREVIEW);
+        this.contentContainer = this.container.querySelector(SELECTOR_BOX_PREVIEW_CONTENT);
 
         // Setup the header, buttons, and theme
         if (options.header !== 'none') {
@@ -125,6 +131,16 @@ class PreviewUI {
         document.addEventListener('keydown', this.keydownHandler);
 
         return this.container;
+    }
+
+    /**
+     * Whether the UI has been setup yet
+     *
+     * @public
+     * @return {boolean} Whether the UI has been setup
+     */
+    isSetup() {
+        return this.container && this.container.innerHTML !== '';
     }
 
     /**
@@ -158,20 +174,20 @@ class PreviewUI {
         // Hide the arrows by default
         leftNavEl.classList.add(CLASS_HIDDEN);
         rightNavEl.classList.add(CLASS_HIDDEN);
-        this.contentContainer.classList.remove(CLASS_BOX_PREVIEW_HAS_NAVIGATION);
+        this.previewContainer.classList.remove(CLASS_BOX_PREVIEW_HAS_NAVIGATION);
 
         leftNavEl.removeEventListener('click', this.leftHandler);
         rightNavEl.removeEventListener('click', this.rightHandler);
-        this.contentContainer.removeEventListener('mousemove', this.mousemoveHandler);
+        this.previewContainer.removeEventListener('mousemove', this.mousemoveHandler);
 
         // Don't show navigation when there is no need
         if (collection.length < 2) {
             return;
         }
 
-        this.contentContainer.classList.add(CLASS_BOX_PREVIEW_HAS_NAVIGATION);
+        this.previewContainer.classList.add(CLASS_BOX_PREVIEW_HAS_NAVIGATION);
 
-        this.contentContainer.addEventListener('mousemove', this.mousemoveHandler);
+        this.previewContainer.addEventListener('mousemove', this.mousemoveHandler);
 
         // Selectively show or hide the navigation arrows
         const index = collection.indexOf(id);
@@ -248,8 +264,8 @@ class PreviewUI {
      * @return {void}
      */
     showLoadingIndicator() {
-        if (this.contentContainer) {
-            this.contentContainer.classList.remove(CLASS_PREVIEW_LOADED);
+        if (this.previewContainer) {
+            this.previewContainer.classList.remove(CLASS_PREVIEW_LOADED);
         }
     }
 
@@ -260,14 +276,14 @@ class PreviewUI {
      * @return {void}
      */
     hideLoadingIndicator() {
-        if (!this.contentContainer) {
+        if (!this.previewContainer) {
             return;
         }
 
-        this.contentContainer.classList.add(CLASS_PREVIEW_LOADED);
+        this.previewContainer.classList.add(CLASS_PREVIEW_LOADED);
 
         // Re-show the cralwer for the next preview since it is hidden in finishLoadingSetup() in BaseViewer.js
-        const crawler = this.contentContainer.querySelector(SELECTOR_BOX_PREVIEW_CRAWLER_WRAPPER);
+        const crawler = this.previewContainer.querySelector(SELECTOR_BOX_PREVIEW_CRAWLER_WRAPPER);
         if (crawler) {
             crawler.classList.remove(CLASS_HIDDEN);
         }
@@ -309,14 +325,15 @@ class PreviewUI {
      * @public
      * @param {string} message - Notification message
      * @param {string} [buttonText] - Optional text to show in button
+     * @param {boolean} [persist] - Optional boolean to persist the notification
      * @return {void}
      */
-    showNotification(message, buttonText) {
+    showNotification(message, buttonText, persist) {
         if (!this.notification) {
             return;
         }
 
-        this.notification.show(message, buttonText);
+        this.notification.show(message, buttonText, persist);
     }
 
     /**
@@ -348,7 +365,7 @@ class PreviewUI {
 
         // First hide all possible headers
         const headers = this.container.querySelectorAll(`.${CLASS_BOX_PREVIEW_HEADER}`);
-        [].forEach.call(headers, (header) => {
+        [].forEach.call(headers, header => {
             header.classList.add(CLASS_HIDDEN);
         });
 
@@ -368,9 +385,12 @@ class PreviewUI {
      * @return {void}
      */
     setupHeader(headerTheme, logoUrl) {
-        const headerEl = this.container.firstElementChild;
+        const headerContainerEl = this.container.querySelector(SELECTOR_BOX_PREVIEW_HEADER_CONTAINER);
+        headerContainerEl.classList.remove(CLASS_HIDDEN);
+
+        const headerEl = headerContainerEl.firstElementChild;
         headerEl.className = `${CLASS_BOX_PREVIEW_HEADER} ${CLASS_BOX_PREVIEW_BASE_HEADER}`;
-        this.contentContainer.classList.add(CLASS_BOX_PREVIEW_HAS_HEADER);
+        this.previewContainer.classList.add(CLASS_BOX_PREVIEW_HAS_HEADER);
 
         // Setup theme, default is 'light'
         if (headerTheme === 'dark') {

@@ -2,12 +2,13 @@
 import MarkdownViewer from '../MarkdownViewer';
 import BaseViewer from '../../BaseViewer';
 import Popup from '../../../Popup';
-import { TEXT_STATIC_ASSETS_VERSION } from '../../../constants';
+import { TEXT_STATIC_ASSETS_VERSION, SELECTOR_BOX_PREVIEW } from '../../../constants';
 import { VIEWER_EVENT } from '../../../events';
 
+const sandbox = sinon.sandbox.create();
 let containerEl;
 let markdown;
-const sandbox = sinon.sandbox.create();
+let rootEl;
 
 describe('lib/viewers/text/MarkdownViewer', () => {
     const setupFunc = BaseViewer.prototype.setup;
@@ -19,15 +20,17 @@ describe('lib/viewers/text/MarkdownViewer', () => {
     beforeEach(() => {
         fixture.load('viewers/text/__tests__/MarkdownViewer-test.html');
         containerEl = document.querySelector('.container');
+        rootEl = document.querySelector(SELECTOR_BOX_PREVIEW);
         markdown = new MarkdownViewer({
             file: {
-                id: 0
+                id: 0,
             },
-            container: containerEl
+            container: containerEl,
         });
 
         Object.defineProperty(BaseViewer.prototype, 'setup', { value: sandbox.mock() });
         markdown.containerEl = containerEl;
+        markdown.rootEl = rootEl;
         markdown.setup();
     });
 
@@ -63,7 +66,7 @@ describe('lib/viewers/text/MarkdownViewer', () => {
             markdown.printReady = false;
             markdown.printPopup = {
                 show: sandbox.stub(),
-                disableButton: sandbox.stub()
+                disableButton: sandbox.stub(),
             };
 
             markdown.print();
@@ -71,7 +74,7 @@ describe('lib/viewers/text/MarkdownViewer', () => {
             expect(markdown.preparePrint).to.be.calledWith([
                 `third-party/text/${TEXT_STATIC_ASSETS_VERSION}/github.min.css`,
                 `third-party/text/${TEXT_STATIC_ASSETS_VERSION}/github-markdown.min.css`,
-                'preview.css'
+                'preview.css',
             ]);
             expect(markdown.printPopup.show).to.be.calledWith('Preparing to print...', 'Print', sinon.match.func);
             expect(markdown.printPopup.disableButton).to.be.called;
@@ -88,7 +91,7 @@ describe('lib/viewers/text/MarkdownViewer', () => {
             const event = {
                 preventDefault: () => {},
                 stopPropagation: () => {},
-                target: markdown.printPopup.buttonEl
+                target: markdown.printPopup.buttonEl,
             };
             markdown.printPopup.popupClickHandler(event);
 
@@ -117,7 +120,7 @@ describe('lib/viewers/text/MarkdownViewer', () => {
 
         it('should finish loading, init markdown renderer, show the markdown, and emit load', () => {
             const md = {
-                render: sandbox.stub()
+                render: sandbox.stub(),
             };
             sandbox.stub(markdown, 'initRemarkable').returns(md);
             sandbox.stub(markdown, 'loadUI');
@@ -135,7 +138,7 @@ describe('lib/viewers/text/MarkdownViewer', () => {
 
         it('should show truncated download button if text is truncated', () => {
             sandbox.stub(markdown, 'initRemarkable').returns({
-                render: () => {}
+                render: () => {},
             });
             sandbox.stub(markdown, 'loadUI');
             sandbox.stub(markdown, 'emit');

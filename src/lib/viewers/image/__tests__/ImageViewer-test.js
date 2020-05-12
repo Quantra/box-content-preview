@@ -2,7 +2,6 @@
 import ImageViewer from '../ImageViewer';
 import BaseViewer from '../../BaseViewer';
 import Browser from '../../../Browser';
-import * as util from '../../../util';
 
 const sandbox = sinon.sandbox.create();
 const imageUrl =
@@ -28,18 +27,18 @@ describe('lib/viewers/image/ImageViewer', () => {
             file: {
                 id: '1',
                 file_version: {
-                    id: '1'
-                }
+                    id: '1',
+                },
             },
             viewer: {
                 NAME: 'Image',
-                ASSET: '1.png'
+                ASSET: '1.png',
             },
             representation: {
                 content: {
-                    url_template: 'foo'
-                }
-            }
+                    url_template: 'foo',
+                },
+            },
         });
 
         Object.defineProperty(BaseViewer.prototype, 'setup', { value: sandbox.stub() });
@@ -118,7 +117,7 @@ describe('lib/viewers/image/ImageViewer', () => {
 
         it('should not prefetch content if file is watermarked', () => {
             image.options.file.watermark_info = {
-                is_watermarked: true
+                is_watermarked: true,
             };
             sandbox.stub(image, 'createContentUrlWithAuthParams');
 
@@ -236,6 +235,7 @@ describe('lib/viewers/image/ImageViewer', () => {
             image.wrapperEl.style.height = '50px';
 
             sandbox.stub(image, 'getRepStatus').returns({ getPromise: () => Promise.resolve() });
+            image.setup();
             image.load(imageUrl).catch(() => {});
         });
 
@@ -326,64 +326,31 @@ describe('lib/viewers/image/ImageViewer', () => {
     describe('setScale()', () => {
         it('should emit a scale event with current scale and rotationAngle', () => {
             sandbox.stub(image, 'emit');
+            image.zoomControls = {
+                setCurrentScale: sandbox.stub(),
+                removeListener: sandbox.stub(),
+            };
             image.currentRotationAngle = -90;
             const [width, height] = [100, 100];
 
             image.setScale(width, height);
             expect(image.emit).to.be.calledWith('scale', {
                 scale: sinon.match.any,
-                rotationAngle: sinon.match.number
+                rotationAngle: sinon.match.number,
             });
+            expect(image.zoomControls.setCurrentScale).to.be.calledWith(sinon.match.number);
         });
     });
 
     describe('loadUI()', () => {
         it('should load UI & controls for zoom', () => {
+            image.scale = 0.5;
+
             image.loadUI();
 
             expect(image.controls).to.not.be.undefined;
             expect(image.controls.buttonRefs.length).to.equal(5);
-        });
-    });
-
-    describe('print()', () => {
-        beforeEach(() => {
-            stubs.mockIframe = util.openContentInsideIframe(image.imageEl.outerHTML);
-            stubs.focus = sandbox.stub(stubs.mockIframe.contentWindow, 'focus');
-            stubs.execCommand = sandbox.stub(stubs.mockIframe.contentWindow.document, 'execCommand');
-            stubs.print = sandbox.stub(stubs.mockIframe.contentWindow, 'print');
-
-            stubs.openContentInsideIframe = sandbox.stub(util, 'openContentInsideIframe').returns(stubs.mockIframe);
-            stubs.getName = sandbox.stub(Browser, 'getName');
-        });
-
-        it('should open the content inside an iframe, center, and focus', () => {
-            image.print();
-            expect(stubs.openContentInsideIframe).to.be.called;
-            expect(image.printImage.style.display).to.equal('block');
-            expect(image.printImage.style.margin).to.equal('0px auto');
-            expect(stubs.focus).to.be.called;
-        });
-
-        it('should execute the print command if the browser is Explorer', () => {
-            stubs.getName.returns('Explorer');
-
-            image.print();
-            expect(stubs.execCommand).to.be.calledWith('print', false, null);
-        });
-
-        it('should execute the print command if the browser is Edge', () => {
-            stubs.getName.returns('Edge');
-
-            image.print();
-            expect(stubs.execCommand).to.be.calledWith('print', false, null);
-        });
-
-        it('should call the contentWindow print for other browsers', () => {
-            stubs.getName.returns('Chrome');
-
-            image.print();
-            expect(stubs.print).to.be.called;
+            expect(image.zoomControls.currentScale).to.equal(50);
         });
     });
 
@@ -407,7 +374,7 @@ describe('lib/viewers/image/ImageViewer', () => {
             const widthAndHeightObj = image.getTransformWidthAndHeight(width, height, false);
             expect(widthAndHeightObj).to.deep.equal({
                 width,
-                height
+                height,
             });
         });
 
@@ -417,7 +384,7 @@ describe('lib/viewers/image/ImageViewer', () => {
             const widthAndHeightObj = image.getTransformWidthAndHeight(width, height, true);
             expect(widthAndHeightObj).to.deep.equal({
                 width: height,
-                height: width
+                height: width,
             });
         });
     });
@@ -503,7 +470,7 @@ describe('lib/viewers/image/ImageViewer', () => {
                 metaKey: null,
                 clientX: 1,
                 clientY: 1,
-                preventDefault: sandbox.stub()
+                preventDefault: sandbox.stub(),
             };
             image.handleMouseUp(event);
             event.button = 1;
@@ -522,7 +489,7 @@ describe('lib/viewers/image/ImageViewer', () => {
                 metaKey: null,
                 clientX: 1,
                 clientY: 1,
-                preventDefault: sandbox.stub()
+                preventDefault: sandbox.stub(),
             };
             image.isZoomable = true;
             image.handleMouseUp(event);
@@ -536,7 +503,7 @@ describe('lib/viewers/image/ImageViewer', () => {
                 metaKey: null,
                 clientX: 1,
                 clientY: 1,
-                preventDefault: sandbox.stub()
+                preventDefault: sandbox.stub(),
             };
             image.isZoomable = false;
             image.didPan = false;
@@ -551,7 +518,7 @@ describe('lib/viewers/image/ImageViewer', () => {
                 metaKey: null,
                 clientX: 1,
                 clientY: 1,
-                preventDefault: sandbox.stub()
+                preventDefault: sandbox.stub(),
             };
             image.isZoomable = false;
             image.didPan = true;
@@ -568,8 +535,32 @@ describe('lib/viewers/image/ImageViewer', () => {
             expect(stubs.padding).to.be.called;
             expect(image.emit).to.be.calledWith('scale', {
                 scale: sinon.match.any,
-                rotationAngle: sinon.match.number
+                rotationAngle: sinon.match.number,
             });
+        });
+    });
+
+    describe('handleAssetAndRepLoad', () => {
+        it('should setup image src', done => {
+            const url = 'foo';
+            const imageEl = document.createElement('img');
+
+            image.imageEl = imageEl;
+            const startLoadTimer = sandbox.stub(image, 'startLoadTimer');
+            const loadBoxAnnotations = sandbox.stub(image, 'loadBoxAnnotations').returns(Promise.resolve());
+            const createAnnotator = sandbox.stub(image, 'createAnnotator').returns(
+                new Promise(resolve => {
+                    resolve();
+                    done();
+                }),
+            );
+
+            image.handleAssetAndRepLoad(url);
+
+            expect(startLoadTimer).to.be.called;
+            expect(imageEl.url).to.be.equal(url);
+            expect(loadBoxAnnotations).to.be.called;
+            expect(createAnnotator).to.be.called;
         });
     });
 });

@@ -8,6 +8,8 @@ const CONTROLS_PAGE_NUM_INPUT_CLASS = 'bp-page-num-input';
 const CONTROLS_PAGE_NUM_WRAPPER_CLASS = 'bp-page-num-wrapper';
 const CONTROLS_AUTO_HIDE_TIMEOUT_IN_MILLIS = 2000;
 
+export const CLASS_BOX_CONTROLS_GROUP_BUTTON = 'bp-controls-group-btn';
+
 class Controls {
     /** @property {HTMLElement} - Controls container element */
     containerEl;
@@ -33,11 +35,9 @@ class Controls {
     constructor(container) {
         this.containerEl = container;
 
-        const controlsWrapperEl = this.containerEl.appendChild(document.createElement('div'));
-        controlsWrapperEl.className = 'bp-controls-wrapper';
-
-        this.controlsEl = controlsWrapperEl.appendChild(document.createElement('div'));
+        this.controlsEl = this.containerEl.appendChild(document.createElement('div'));
         this.controlsEl.className = 'bp-controls';
+        this.controlsEl.setAttribute('data-testid', 'bp-controls');
 
         this.containerEl.addEventListener('mousemove', this.mousemoveHandler);
         this.controlsEl.addEventListener('mouseenter', this.mouseenterHandler);
@@ -67,7 +67,7 @@ class Controls {
             this.controlsEl.removeEventListener('click', this.clickHandler);
         }
 
-        this.buttonRefs.forEach((ref) => {
+        this.buttonRefs.forEach(ref => {
             ref.button.removeEventListener('click', ref.handler);
         });
     }
@@ -146,7 +146,7 @@ class Controls {
      * @param {Event} event - A DOM-normalized event object.
      * @return {void}
      */
-    focusinHandler = (event) => {
+    focusinHandler = event => {
         // When we focus onto a preview control button, show controls
         if (this.isPreviewControlButton(event.target)) {
             this.containerEl.classList.add(SHOW_PREVIEW_CONTROLS_CLASS);
@@ -161,7 +161,7 @@ class Controls {
      * @param {Event} event - A DOM-normalized event object.
      * @return {void}
      */
-    focusoutHandler = (event) => {
+    focusoutHandler = event => {
         // When we focus out of a control button and aren't focusing onto another control button, hide the controls
         if (this.isPreviewControlButton(event.target) && !this.isPreviewControlButton(event.relatedTarget)) {
             this.shouldHide = true;
@@ -181,39 +181,67 @@ class Controls {
     };
 
     /**
-     * Adds buttons to controls
+     * Adds element to controls
      *
      * @public
-     * @param {string} text - button text
-     * @param {Function} handler - button handler
+     * @param {string} text - text
+     * @param {Function} handler - on click handler
      * @param {string} [classList] - optional class list
-     * @param {string} [buttonContent] - Optional button content HTML
-     * @return {void}
+     * @param {string} [content] - Optional content HTML
+     * @param {string} [tag] - Optional html tag, defaults to 'button'
+     * @param {HTMLElement} [parent] - Optional parent tag, defaults to the controls element
+     * @return {HTMLElement} The created HTMLElement inserted into the control
      */
-    add(text, handler, classList = '', buttonContent = '') {
+    add(text, handler, classList = '', content = '', tag = 'button', parent = this.controlsEl) {
+        const parentElement = this.controlsEl.contains(parent) ? parent : this.controlsEl;
+
         const cell = document.createElement('div');
         cell.className = 'bp-controls-cell';
 
-        const button = document.createElement('button');
-        button.setAttribute('aria-label', text);
-        button.setAttribute('title', text);
-        button.className = `${CONTROLS_BUTTON_CLASS} ${classList}`;
-        button.addEventListener('click', handler);
+        const element = document.createElement(tag);
+        element.setAttribute('aria-label', text);
+        element.setAttribute('title', text);
 
-        if (buttonContent) {
-            button.innerHTML = buttonContent;
+        if (tag === 'button') {
+            element.setAttribute('type', 'button');
+            element.className = `${CONTROLS_BUTTON_CLASS} ${classList}`;
+            element.addEventListener('click', handler);
+        } else {
+            element.className = `${classList}`;
         }
 
-        cell.appendChild(button);
-        this.controlsEl.appendChild(cell);
+        if (content) {
+            element.innerHTML = content;
+        }
 
-        // Maintain a reference for cleanup
-        this.buttonRefs.push({
-            button,
-            handler
-        });
+        cell.appendChild(element);
+        parentElement.appendChild(cell);
 
-        return button;
+        if (handler) {
+            // Maintain a reference for cleanup
+            this.buttonRefs.push({
+                button: element,
+                handler,
+            });
+        }
+
+        return element;
+    }
+
+    /**
+     * Add div for a group of controls
+     *
+     * @public
+     * @param {string} classNames - optional class names
+     * @return {HTMLElement} The created HTMLElement for a group of controls
+     */
+    addGroup(classNames = '') {
+        const group = document.createElement('div');
+        group.className = `bp-controls-group ${classNames}`;
+
+        this.controlsEl.appendChild(group);
+
+        return group;
     }
 
     /**

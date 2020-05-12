@@ -1,6 +1,7 @@
 /* eslint-disable no-unused-expressions */
-import RepStatus from '../RepStatus';
 import * as util from '../util';
+import Api from '../api';
+import RepStatus from '../RepStatus';
 import { LOAD_METRIC } from '../events';
 import Timer from '../Timer';
 import { STATUS_SUCCESS } from '../constants';
@@ -17,10 +18,10 @@ describe('lib/RepStatus', () => {
     beforeEach(() => {
         rep = {
             info: {
-                url: 'https://info'
+                url: 'https://info',
             },
             links: {},
-            status: {}
+            status: {},
         };
 
         /* eslint-disable require-jsdoc */
@@ -28,9 +29,10 @@ describe('lib/RepStatus', () => {
         /* eslint-enable require-jsdoc */
 
         repStatus = new RepStatus({
+            api: new Api(),
             representation: rep,
             logger,
-            fileId
+            fileId,
         });
     });
 
@@ -52,9 +54,9 @@ describe('lib/RepStatus', () => {
             expect(
                 RepStatus.getStatus({
                     status: {
-                        state: status
-                    }
-                })
+                        state: status,
+                    },
+                }),
             ).to.equal(status);
         });
     });
@@ -64,9 +66,9 @@ describe('lib/RepStatus', () => {
             expect(
                 RepStatus.getErrorCode({
                     status: {
-                        code: 'conversion_failed'
-                    }
-                })
+                        code: 'conversion_failed',
+                    },
+                }),
             ).to.equal('conversion_failed');
         });
     });
@@ -80,8 +82,9 @@ describe('lib/RepStatus', () => {
 
         it('should set the correct object properties', () => {
             repStatus = new RepStatus({
+                api: {},
                 representation: rep,
-                logger: {}
+                logger: {},
             });
 
             expect(repStatus.representation).to.deep.equal(rep);
@@ -106,14 +109,14 @@ describe('lib/RepStatus', () => {
 
         it('should fetch latest status', () => {
             sandbox
-                .mock(util)
+                .mock(repStatus.api)
                 .expects('get')
                 .returns(
                     Promise.resolve({
                         status: {
-                            state
-                        }
-                    })
+                            state,
+                        },
+                    }),
                 );
 
             return repStatus.updateStatus().then(() => {
@@ -124,17 +127,17 @@ describe('lib/RepStatus', () => {
 
         it('should update provided metadata', () => {
             sandbox
-                .mock(util)
+                .mock(repStatus.api)
                 .expects('get')
                 .returns(
                     Promise.resolve({
                         status: {
-                            state
+                            state,
                         },
                         metadata: {
-                            pages: 10
-                        }
-                    })
+                            pages: 10,
+                        },
+                    }),
                 );
 
             return repStatus.updateStatus().then(() => {
@@ -146,7 +149,7 @@ describe('lib/RepStatus', () => {
 
         it('should return a resolved promise if there is no info url', () => {
             sandbox
-                .mock(util)
+                .mock(Api.prototype)
                 .expects('get')
                 .never();
             repStatus.infoUrl = '';
@@ -168,11 +171,11 @@ describe('lib/RepStatus', () => {
             repStatus.updateStatus = () => {};
         });
 
-        it('should reject with the refresh message if the rep status is error', (done) => {
+        it('should reject with the refresh message if the rep status is error', done => {
             sandbox
                 .mock(repStatus)
                 .expects('reject')
-                .callsFake((err) => {
+                .callsFake(err => {
                     expect(err.displayMessage).to.equal(__('error_refresh'));
                     done();
                 });
@@ -181,11 +184,11 @@ describe('lib/RepStatus', () => {
             repStatus.handleResponse();
         });
 
-        it('should reject with the protected message if the rep status is error due to a password protected PDF', (done) => {
+        it('should reject with the protected message if the rep status is error due to a password protected PDF', done => {
             sandbox
                 .mock(repStatus)
                 .expects('reject')
-                .callsFake((err) => {
+                .callsFake(err => {
                     expect(err.displayMessage).to.equal(__('error_password_protected'));
                     done();
                 });
@@ -195,11 +198,11 @@ describe('lib/RepStatus', () => {
             repStatus.handleResponse();
         });
 
-        it('should reject with the try again message if the rep status is error due to unavailability', (done) => {
+        it('should reject with the try again message if the rep status is error due to unavailability', done => {
             sandbox
                 .mock(repStatus)
                 .expects('reject')
-                .callsFake((err) => {
+                .callsFake(err => {
                     expect(err.displayMessage).to.equal(__('error_try_again_later'));
                     done();
                 });
@@ -209,16 +212,30 @@ describe('lib/RepStatus', () => {
             repStatus.handleResponse();
         });
 
-        it('should reject with the unsupported format message if the rep status is error due a bad file', (done) => {
+        it('should reject with the unsupported format message if the rep status is error due a bad file', done => {
             sandbox
                 .mock(repStatus)
                 .expects('reject')
-                .callsFake((err) => {
+                .callsFake(err => {
                     expect(err.displayMessage).to.equal(__('error_bad_file'));
                     done();
                 });
             repStatus.representation.status.state = 'error';
             repStatus.representation.status.code = 'error_unsupported_format';
+
+            repStatus.handleResponse();
+        });
+
+        it('should reject with the re upload message if the rep status is error due to conversion failure', done => {
+            sandbox
+                .mock(repStatus)
+                .expects('reject')
+                .callsFake(err => {
+                    expect(err.displayMessage).to.equal(__('error_reupload'));
+                    done();
+                });
+            repStatus.representation.status.state = 'error';
+            repStatus.representation.status.code = 'error_conversion_failed';
 
             repStatus.handleResponse();
         });
@@ -239,7 +256,7 @@ describe('lib/RepStatus', () => {
 
         it('should log that file needs conversion if status is pending and logger exists', () => {
             repStatus.logger = {
-                setUnConverted: () => {}
+                setUnConverted: () => {},
             };
             sandbox.mock(repStatus.logger).expects('setUnConverted');
             sandbox.stub(repStatus, 'emit');
@@ -250,7 +267,7 @@ describe('lib/RepStatus', () => {
             expect(repStatus.emit).to.be.calledWith('conversionpending');
         });
 
-        it('should update status after a timeout', () => {
+        it('should update status after a timeout and update interval when pending', () => {
             const clock = sinon.useFakeTimers();
             repStatus.logger = false;
             sandbox.mock(repStatus).expects('updateStatus');
@@ -258,6 +275,17 @@ describe('lib/RepStatus', () => {
 
             repStatus.handleResponse();
             clock.tick(STATUS_UPDATE_INTERVAL_MS + 1);
+            clock.restore();
+        });
+
+        it('should update status immediately after a timeout when none', () => {
+            const clock = sinon.useFakeTimers();
+            repStatus.logger = false;
+            sandbox.mock(repStatus).expects('updateStatus');
+            repStatus.representation.status.state = 'none';
+
+            repStatus.handleResponse();
+            clock.tick(1);
             clock.restore();
         });
 

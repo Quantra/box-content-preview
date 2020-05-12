@@ -12,15 +12,15 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
     const options = {
         token: '12345572asdfliuohhr34812348960',
         file: {
-            id: 'f_098765'
-        }
+            id: 'f_098765',
+        },
     };
     const VIDEO_PROPS = {
         loop: false,
         generateMipmaps: false,
         querySelector: '.bp-media-container video',
         autoPlay: false,
-        muted: false
+        muted: false,
     };
     // Taken from ./video360.js
     const VIDEO_TEXTURE_PROPS = {
@@ -28,7 +28,7 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
         minFilter: 'linear',
         magFilter: 'linear',
         wrapModeV: 'clampToEdge',
-        wrapModeU: 'clampToEdge'
+        wrapModeU: 'clampToEdge',
     };
 
     let viewer;
@@ -44,6 +44,7 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
         options.container = containerEl;
         options.location = {};
         viewer = new Video360Viewer(options);
+        sandbox.stub(viewer, 'processMetrics');
     });
 
     afterEach(() => {
@@ -87,7 +88,7 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
         it('should invoke skybox.setAttribute() with params "skyboxTexture" and null, if .skybox exists', () => {
             const spy = sandbox.spy();
             const skybox = {
-                setAttribute: spy
+                setAttribute: spy,
             };
 
             viewer.skybox = skybox;
@@ -99,7 +100,7 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
 
         it('should invoke textureAsset.destroy() if it exists', () => {
             const textureAsset = {
-                destroy: sandbox.stub()
+                destroy: sandbox.stub(),
             };
 
             viewer.textureAsset = textureAsset;
@@ -110,7 +111,7 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
 
         it('should invoke videoAsset.destroy() if it exists', () => {
             const videoAsset = {
-                destroy: sandbox.stub()
+                destroy: sandbox.stub(),
             };
 
             viewer.videoAsset = videoAsset;
@@ -133,13 +134,13 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
             let b3dMock;
             beforeEach(() => {
                 b3dMock = {
-                    off: sandbox.stub()
+                    off: sandbox.stub(),
                 };
 
                 rendererMock = {
                     removeListener: sandbox.stub(),
                     destroy: sandbox.stub(),
-                    getBox3D: sandbox.stub().returns(b3dMock)
+                    getBox3D: sandbox.stub().returns(b3dMock),
                 };
 
                 viewer.renderer = rendererMock;
@@ -172,7 +173,7 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
     describe('getJSAssets()', () => {
         it('return assets including box3d-specific and WebVR JS', () => {
             const assets = viewer.getJSAssets();
-            JS.forEach((asset) => {
+            JS.forEach(asset => {
                 expect(assets.indexOf(asset) !== -1).to.be.true;
             });
         });
@@ -184,7 +185,7 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
         before(() => {
             superLoadedData = sandbox.stub();
             Object.defineProperty(Object.getPrototypeOf(Video360Viewer.prototype), 'loadeddataHandler', {
-                value: superLoadedData
+                value: superLoadedData,
             });
         });
 
@@ -196,7 +197,7 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
         });
 
         afterEach(() => {
-            Object.keys(stubs).forEach((key) => {
+            Object.keys(stubs).forEach(key => {
                 const stub = stubs[key];
                 if (stub.restore) {
                     stub.restore();
@@ -205,31 +206,31 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
             viewer.renderer = null;
         });
 
-        it('should create a new Video360 renderer instance', (done) => {
+        it('should create a new Video360 renderer instance', done => {
             stubs.createControls = sandbox.stub(viewer, 'createControls').callsFake(done);
             viewer.loadeddataHandler();
             expect(viewer.renderer).to.be.an.instanceof(Video360Renderer);
         });
 
-        it('should set .options.sceneEntities to the sceneEntities imported into Video360', (done) => {
+        it('should set .options.sceneEntities to the sceneEntities imported into Video360', done => {
             stubs.createControls = sandbox.stub(viewer, 'createControls').callsFake(done);
             viewer.loadeddataHandler();
             expect(viewer.options.sceneEntities).to.deep.equal(sceneEntities);
         });
 
-        it('should add custom event handler for VR Toggle to .renderer via .renderer.on()', (done) => {
+        it('should add custom event handler for VR Toggle to .renderer via .renderer.on()', done => {
             stubs.createControls = sandbox.stub(viewer, 'createControls').callsFake(done);
             viewer.loadeddataHandler();
             expect(stubs.on).to.be.calledWith(EVENT_SHOW_VR_BUTTON, viewer.handleShowVrButton);
         });
 
-        it('should invoke .renderer.initBox3d() with .options', (done) => {
+        it('should invoke .renderer.initBox3d() with .options', done => {
             stubs.createControls = sandbox.stub(viewer, 'createControls').callsFake(done);
             viewer.loadeddataHandler();
             expect(stubs.initBox3d).to.be.calledWith(viewer.options);
         });
 
-        it('should invoke .create360Environment() after successfully initializing renderer', (done) => {
+        it('should invoke .create360Environment() after successfully initializing renderer', done => {
             stubs.createControls = sandbox.stub(viewer, 'createControls').callsFake(() => {
                 expect(stubs.create360Environment).to.be.called;
                 done();
@@ -237,7 +238,7 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
             viewer.loadeddataHandler();
         });
 
-        it('should invoke super.metadataloadedHandler() on successfully creating 360 environment', (done) => {
+        it('should invoke super.metadataloadedHandler() on successfully creating 360 environment', done => {
             stubs.createControls = sandbox.stub(viewer, 'createControls').callsFake(() => {
                 expect(superLoadedData).to.be.called;
                 done();
@@ -245,12 +246,12 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
             viewer.loadeddataHandler();
         });
 
-        it('should invoke .createControls() on successfully creating 360 environment', (done) => {
+        it('should invoke .createControls() on successfully creating 360 environment', done => {
             sandbox.stub(viewer, 'createControls').callsFake(done);
             viewer.loadeddataHandler();
         });
 
-        it('should invoke .renderer.initVrIfPresent() on successfully creating 360 environment', (done) => {
+        it('should invoke .renderer.initVrIfPresent() on successfully creating 360 environment', done => {
             sandbox.stub(viewer, 'createControls');
             stubs.initVr.restore();
             stubs.initVr = sandbox.stub(Video360Renderer.prototype, 'initVr').callsFake(() => {
@@ -273,8 +274,8 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
                 destroy: sandbox.stub(),
                 getBox3D: sandbox.stub().returns({
                     canvas: document.createElement('canvas'),
-                    off: sandbox.stub()
-                })
+                    off: sandbox.stub(),
+                }),
             };
         });
 
@@ -314,12 +315,12 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
         beforeEach(() => {
             controls = {
                 removeListener: sandbox.stub(),
-                destroy: sandbox.stub()
+                destroy: sandbox.stub(),
             };
             viewer.controls = controls;
             viewer.destroyControls();
             canvas = {
-                removeEventListener: sandbox.stub()
+                removeEventListener: sandbox.stub(),
             };
             viewer.renderer = {
                 addListener: sandbox.stub(),
@@ -327,8 +328,8 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
                 destroy: sandbox.stub(),
                 getBox3D: sandbox.stub().returns({
                     canvas,
-                    off: sandbox.stub()
-                })
+                    off: sandbox.stub(),
+                }),
             };
         });
 
@@ -344,7 +345,6 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
             expect(controls.destroy).to.be.called;
         });
 
-
         it('should bind mousemove listener to display video player UI', () => {
             viewer.destroyControls();
 
@@ -357,17 +357,16 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
 
             expect(canvas.removeEventListener).to.be.calledWith('touchstart');
         });
-
     });
 
     describe('resize()', () => {
         it('should call resize on .renderer, if it exists', () => {
             Object.defineProperty(Object.getPrototypeOf(Video360Viewer.prototype), 'resize', {
-                value: sandbox.stub()
+                value: sandbox.stub(),
             });
 
             viewer.renderer = {
-                resize: sandbox.stub()
+                resize: sandbox.stub(),
             };
             viewer.resize();
 
@@ -386,29 +385,29 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
         beforeEach(() => {
             skybox = {
                 setAttribute: sandbox.stub(),
-                enable: sandbox.stub()
+                enable: sandbox.stub(),
             };
 
             scene = {
-                getComponentByScriptId: sandbox.stub().returns(skybox)
+                getComponentByScriptId: sandbox.stub().returns(skybox),
             };
 
             box3d = {
                 getEntityById: sandbox.stub().returns(scene),
                 createVideo: sandbox.stub().returns({
-                    setProperties: sandbox.stub()
+                    setProperties: sandbox.stub(),
                 }),
                 createTexture2d: sandbox.stub().returns({
                     setProperties: sandbox.stub(),
                     load: sandbox.stub().callsArg(0),
-                    id: '12345'
+                    id: '12345',
                 }),
-                on: sandbox.stub()
+                on: sandbox.stub(),
             };
 
             renderer = {
                 getBox3D: sandbox.stub().returns(box3d),
-                getScene: sandbox.stub().returns(scene)
+                getScene: sandbox.stub().returns(scene),
             };
 
             sandbox.stub(viewer, 'finishLoadingSetup');
@@ -452,29 +451,29 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
         });
 
         describe('load texture asset', () => {
-            it('should resolve the Promise returned after successfully loading .textureAsset', (done) => {
+            it('should resolve the Promise returned after successfully loading .textureAsset', done => {
                 createPromise.then(done);
             });
 
-            it('should invoke the texture asset\'s load() via .textureAsset.load()', () => {
+            it("should invoke the texture asset's load() via .textureAsset.load()", () => {
                 expect(viewer.textureAsset.load).to.be.called;
             });
 
-            it('should set the skyboxTexture attribute of the skybox component with the textureAsset via .skybox.setAttribute()', (done) => {
+            it('should set the skyboxTexture attribute of the skybox component with the textureAsset via .skybox.setAttribute()', done => {
                 createPromise.then(() => {
                     expect(skybox.setAttribute).to.be.calledWith('skyboxTexture', viewer.textureAsset.id);
                     done();
                 });
             });
 
-            it('should invoke .enable() on the skybox component', (done) => {
+            it('should invoke .enable() on the skybox component', done => {
                 createPromise.then(() => {
                     expect(skybox.enable).to.have.been;
                     done();
                 });
             });
 
-            it('should attach mouseDown event listener via .renderer.box3d.on()', (done) => {
+            it('should attach mouseDown event listener via .renderer.box3d.on()', done => {
                 createPromise.then(() => {
                     expect(box3d.on).to.be.calledWith('mouseDown', viewer.onCanvasMouseDown);
                     done();
@@ -496,11 +495,11 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
         beforeEach(() => {
             viewer.renderer = {
                 toggleVr: sandbox.stub(),
-                vrEnabled: true
+                vrEnabled: true,
             };
 
             viewer.skybox = {
-                setAttribute: sandbox.stub()
+                setAttribute: sandbox.stub(),
             };
         });
 
@@ -526,7 +525,7 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
                 viewer.renderer.vrEnabled = false;
                 viewer.mediaEl = {
                     play: sandbox.stub(),
-                    paused: false
+                    paused: false,
                 };
             });
 
@@ -555,7 +554,7 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
     describe('handleShowVrButton()', () => {
         it('should invoke .controls.showVrButton()', () => {
             viewer.controls = {
-                showVrButton: sandbox.stub()
+                showVrButton: sandbox.stub(),
             };
             viewer.handleShowVrButton();
             expect(viewer.controls.showVrButton).to.be.called;
@@ -567,11 +566,11 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
     describe('onCanvasMouseDown()', () => {
         it('should add a single use "mouseUp" event listener via .renderer.getBox3D().once()', () => {
             const box3d = {
-                once: sandbox.stub()
+                once: sandbox.stub(),
             };
 
             viewer.renderer = {
-                getBox3D: sandbox.stub().returns(box3d)
+                getBox3D: sandbox.stub().returns(box3d),
             };
 
             viewer.onCanvasMouseDown();
@@ -586,11 +585,11 @@ describe('lib/viewers/box3d/video360/Video360Viewer', () => {
         beforeEach(() => {
             input = {
                 getPreviousMouseDragState: sandbox.stub(),
-                getPreviousTouchDragState: sandbox.stub()
+                getPreviousTouchDragState: sandbox.stub(),
             };
 
             viewer.renderer = {
-                getInputController: sandbox.stub().returns(input)
+                getInputController: sandbox.stub().returns(input),
             };
 
             sandbox.stub(viewer, 'togglePlay');

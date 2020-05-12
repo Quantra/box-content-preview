@@ -1,9 +1,14 @@
-import Controls from '../../Controls';
 import BaseViewer from '../BaseViewer';
+import Controls from '../../Controls';
+import ZoomControls from '../../ZoomControls';
 import { checkPermission } from '../../file';
-import { CLASS_IS_SELECTABLE, PERMISSION_DOWNLOAD } from '../../constants';
+import { CLASS_IS_PRINTABLE, CLASS_IS_SELECTABLE, PERMISSION_DOWNLOAD } from '../../constants';
+import { ICON_FULLSCREEN_IN, ICON_FULLSCREEN_OUT } from '../../icons/icons';
 
-import { ICON_ZOOM_IN, ICON_ZOOM_OUT, ICON_FULLSCREEN_IN, ICON_FULLSCREEN_OUT } from '../../icons/icons';
+const ZOOM_DEFAULT = 1.0;
+const ZOOM_MAX = 10;
+const ZOOM_MIN = 0.1;
+const ZOOM_STEP = 0.1;
 
 class TextBaseViewer extends BaseViewer {
     /**
@@ -12,14 +17,22 @@ class TextBaseViewer extends BaseViewer {
     constructor(options) {
         super(options);
 
+        this.api = options.api;
+        this.scale = ZOOM_DEFAULT;
+
         // Bind context for handlers;
         this.zoomOut = this.zoomOut.bind(this);
         this.zoomIn = this.zoomIn.bind(this);
     }
+
     /**
      * @inheritdoc
      */
     setup() {
+        if (this.isSetup) {
+            return;
+        }
+
         // Call super() to set up common layout
         super.setup();
     }
@@ -40,26 +53,31 @@ class TextBaseViewer extends BaseViewer {
     /**
      * Zooms by increasing or decreasing font size
      * @public
-     * @param {string} inOrOut - in or out
+     * @param {string} type - in, out, reset
      * @return {void}
      */
-    zoom(inOrOut) {
-        const el = this.containerEl.querySelector('.bp-text');
-        const size = parseInt(el.style.fontSize, 10) || 100;
-        let newFontSize = 0;
+    zoom(type) {
+        let newScale = ZOOM_DEFAULT;
 
-        if (inOrOut === 'in') {
-            newFontSize = `${size + 10}%`;
-        } else if (inOrOut === 'out') {
-            newFontSize = `${size - 10}%`;
+        if (type === 'in') {
+            newScale = this.scale + ZOOM_STEP;
+            newScale = newScale <= ZOOM_MAX ? newScale : ZOOM_MAX;
+        } else if (type === 'out') {
+            newScale = this.scale - ZOOM_STEP;
+            newScale = newScale >= ZOOM_MIN ? newScale : ZOOM_MIN;
         }
 
-        el.style.fontSize = newFontSize;
+        // Convert the decimal scale to a percentage font size for text content
+        this.containerEl.querySelector('.bp-text').style.fontSize = `${Math.round(newScale * 100)}%`;
+
         this.emit('zoom', {
-            zoom: newFontSize,
             canZoomIn: true,
-            canZoomOut: true
+            canZoomOut: true,
+            zoom: newScale,
         });
+
+        this.scale = newScale;
+        this.zoomControls.setCurrentScale(newScale);
     }
 
     /**
@@ -91,6 +109,7 @@ class TextBaseViewer extends BaseViewer {
     load() {
         // Enable text selection if user has download permissions and 'disableTextLayer' option is not true
         if (checkPermission(this.options.file, PERMISSION_DOWNLOAD) && !this.getViewerOption('disableTextLayer')) {
+            this.containerEl.classList.add(CLASS_IS_PRINTABLE);
             this.containerEl.classList.add(CLASS_IS_SELECTABLE);
         }
 
@@ -105,13 +124,21 @@ class TextBaseViewer extends BaseViewer {
      */
     loadUI() {
         this.controls = new Controls(this.containerEl);
-        this.controls.add(__('zoom_out'), this.zoomOut, 'bp-text-zoom-out-icon', ICON_ZOOM_OUT);
-        this.controls.add(__('zoom_in'), this.zoomIn, 'bp-text-zoom-in-icon', ICON_ZOOM_IN);
+        this.zoomControls = new ZoomControls(this.controls);
+        this.zoomControls.init(this.scale, {
+            maxZoom: ZOOM_MAX,
+            minZoom: ZOOM_MIN,
+            onZoomIn: this.zoomIn,
+            onZoomOut: this.zoomOut,
+            zoomInClassName: 'bp-text-zoom-in-icon',
+            zoomOutClassName: 'bp-text-zoom-out-icon',
+        });
+
         this.controls.add(
             __('enter_fullscreen'),
             this.toggleFullscreen,
             'bp-enter-fullscreen-icon',
-            ICON_FULLSCREEN_IN
+            ICON_FULLSCREEN_IN,
         );
         this.controls.add(__('exit_fullscreen'), this.toggleFullscreen, 'bp-exit-fullscreen-icon', ICON_FULLSCREEN_OUT);
     }
@@ -132,7 +159,8 @@ class TextBaseViewer extends BaseViewer {
         if (key === 'Shift++') {
             this.zoomIn();
             return true;
-        } else if (key === 'Shift+_') {
+        }
+        if (key === 'Shift+_') {
             this.zoomOut();
             return true;
         }

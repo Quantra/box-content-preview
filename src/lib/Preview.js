@@ -4,29 +4,27 @@ import EventEmitter from 'events';
 import cloneDeep from 'lodash/cloneDeep';
 import throttle from 'lodash/throttle';
 /* eslint-enable import/first */
+import Api from './api';
 import Browser from './Browser';
 import Logger from './Logger';
 import loaderList from './loaders';
 import Cache from './Cache';
 import PreviewError from './PreviewError';
 import PreviewErrorViewer from './viewers/error/PreviewErrorViewer';
+import PreviewPerf from './PreviewPerf';
 import PreviewUI from './PreviewUI';
 import getTokens from './tokens';
 import Timer from './Timer';
-import DownloadReachability from './DownloadReachability';
 import {
-    get,
     getProp,
-    post,
     decodeKeydown,
     getHeaders,
     findScriptLocation,
     appendQueryParams,
-    replacePlaceholders,
     stripAuthFromString,
     isValidFileId,
     isBoxWebApp,
-    convertWatermarkPref
+    convertWatermarkPref,
 } from './util';
 import {
     getURL,
@@ -40,12 +38,13 @@ import {
     getCachedFile,
     normalizeFileVersion,
     canDownload,
-    shouldDownloadWM
+    shouldDownloadWM,
 } from './file';
 import {
     API_HOST,
     APP_HOST,
     CLASS_NAVIGATION_VISIBILITY,
+    ERROR_CODE_403_FORBIDDEN_BY_POLICY,
     PERMISSION_PREVIEW,
     PREVIEW_SCRIPT_NAME,
     X_REP_HINT_BASE,
@@ -53,7 +52,7 @@ import {
     X_REP_HINT_IMAGE,
     X_REP_HINT_VIDEO_DASH,
     X_REP_HINT_VIDEO_MP4,
-    FILE_OPTION_FILE_VERSION_ID
+    FILE_OPTION_FILE_VERSION_ID,
 } from './constants';
 import {
     VIEWER_EVENT,
@@ -63,7 +62,7 @@ import {
     LOAD_METRIC,
     DURATION_METRIC,
     PREVIEW_END_EVENT,
-    PREVIEW_DOWNLOAD_ATTEMPT_EVENT
+    PREVIEW_DOWNLOAD_ATTEMPT_EVENT,
 } from './events';
 import { getClientLogDetails, getISOTime } from './logUtils';
 import './Preview.scss';
@@ -86,6 +85,9 @@ const SUPPORT_URL = 'https://support.box.com';
 const PREVIEW_LOCATION = findScriptLocation(PREVIEW_SCRIPT_NAME, document.currentScript);
 
 class Preview extends EventEmitter {
+    /** @property {Api} - Previews Api instance used for XHR calls  */
+    api = new Api();
+
     /** @property {boolean} - Whether preview is open */
     open = false;
 
@@ -93,7 +95,7 @@ class Preview extends EventEmitter {
     count = {
         success: 0, // Counts how many previews have happened overall
         error: 0, // Counts how many errors have happened overall
-        navigation: 0 // Counts how many previews have happened by prev next navigation
+        navigation: 0, // Counts how many previews have happened by prev next navigation
     };
 
     /** @property {Object} - Current file being previewed */
@@ -107,9 +109,6 @@ class Preview extends EventEmitter {
 
     /** @property {Object} - Map of disabled viewer names */
     disabledViewers = {};
-
-    /** @property {string} - Access token */
-    token = '';
 
     /** @property {Object} - Current viewer instance */
     viewer;
@@ -156,7 +155,7 @@ class Preview extends EventEmitter {
     constructor() {
         super();
 
-        DEFAULT_DISABLED_VIEWERS.forEach((viewerName) => {
+        DEFAULT_DISABLED_VIEWERS.forEach(viewerName => {
             this.disabledViewers[viewerName] = 1;
         });
 
@@ -200,19 +199,17 @@ class Preview extends EventEmitter {
                 const previewDurationTag = Timer.createTag(this.file.id, DURATION_METRIC);
                 const previewDurationTimer = Timer.get(previewDurationTag);
                 Timer.stop(previewDurationTag);
-
-                const event = {
-                    event_name: PREVIEW_END_EVENT,
-                    value: {
-                        duration: previewDurationTimer ? previewDurationTimer.elapsed : null,
-                        viewer_status: this.viewer.getLoadStatus()
-                    },
-                    ...this.createLogEvent()
-                };
-
+                const previewDuration = previewDurationTimer ? previewDurationTimer.elapsed : null;
                 Timer.reset(previewDurationTag);
-                this.emit(PREVIEW_METRIC, event);
+
+                this.emitLogEvent(PREVIEW_METRIC, {
+                    event_name: PREVIEW_END_EVENT,
+                    value: previewDuration,
+                });
             }
+
+            // Eject http interceptors
+            this.api.ejectInterceptors();
 
             this.viewer.destroy();
         }
@@ -235,10 +232,13 @@ class Preview extends EventEmitter {
         // Token can also be null or undefined for offline use case.
         // But it cannot be a random object.
         if (token === null || typeof token !== 'object') {
-            this.previewOptions = Object.assign({}, options, { token });
+            this.previewOptions = { ...options, token };
         } else {
             throw new Error('Bad access token!');
         }
+
+        // Initalize performance observers
+        this.perf = new PreviewPerf();
 
         // Update the optional file navigation collection and caches
         // if proper valid file objects were passed in.
@@ -263,6 +263,11 @@ class Preview extends EventEmitter {
 
         // Destroy the viewer and cleanup preview
         this.destroy();
+
+        // Destroy pefromance observers
+        if (this.perf) {
+            this.perf.destroy();
+        }
 
         // Clean the UI
         this.ui.cleanup();
@@ -322,15 +327,13 @@ class Preview extends EventEmitter {
         const files = [];
         const fileIds = [];
 
-        fileOrIds.forEach((fileOrId) => {
+        fileOrIds.forEach(fileOrId => {
             if (fileOrId && isValidFileId(fileOrId)) {
                 // String id found in the collection
                 fileIds.push(fileOrId.toString());
             } else if (fileOrId && typeof fileOrId === 'object' && isValidFileId(fileOrId.id)) {
                 // Possible well-formed file object found in the collection
-                const wellFormedFileObj = Object.assign({}, fileOrId, {
-                    id: fileOrId.id.toString()
-                });
+                const wellFormedFileObj = { ...fileOrId, id: fileOrId.id.toString() };
                 fileIds.push(wellFormedFileObj.id);
                 files.push(wellFormedFileObj);
             } else {
@@ -368,7 +371,7 @@ class Preview extends EventEmitter {
             files = [fileMetadata];
         }
 
-        files.forEach((file) => {
+        files.forEach(file => {
             if (file.watermark_info && file.watermark_info.is_watermarked) {
                 return;
             }
@@ -424,7 +427,7 @@ class Preview extends EventEmitter {
      */
     getViewers() {
         let viewers = [];
-        this.loaders.forEach((loader) => {
+        this.loaders.forEach(loader => {
             viewers = viewers.concat(loader.getViewers());
         });
         return viewers;
@@ -439,7 +442,7 @@ class Preview extends EventEmitter {
      */
     disableViewers(viewers) {
         if (Array.isArray(viewers)) {
-            viewers.forEach((viewer) => {
+            viewers.forEach(viewer => {
                 this.disabledViewers[viewer] = 1;
             });
         } else if (viewers) {
@@ -456,7 +459,7 @@ class Preview extends EventEmitter {
      */
     enableViewers(viewers) {
         if (Array.isArray(viewers)) {
-            viewers.forEach((viewer) => {
+            viewers.forEach(viewer => {
                 delete this.disabledViewers[viewer];
             });
         } else if (viewers) {
@@ -497,13 +500,23 @@ class Preview extends EventEmitter {
     }
 
     /**
+     * Checks if the file being previewed supports printing.
+     *
+     * @public
+     * @return {boolean}
+     */
+    canPrint() {
+        return !!canDownload(this.file, this.options) && checkFeature(this.viewer, 'print');
+    }
+
+    /**
      * Prints the file being previewed if the viewer supports printing.
      *
      * @public
      * @return {void}
      */
     print() {
-        if (canDownload(this.file, this.options) && checkFeature(this.viewer, 'print')) {
+        if (this.canPrint()) {
             this.viewer.print();
         }
     }
@@ -516,6 +529,8 @@ class Preview extends EventEmitter {
      */
     download() {
         const downloadErrorMsg = __('notification_cannot_download');
+        const downloadErrorDueToPolicyMsg = __('notification_cannot_download_due_to_policy');
+
         if (!canDownload(this.file, this.options)) {
             this.ui.showNotification(downloadErrorMsg);
             return;
@@ -534,30 +549,35 @@ class Preview extends EventEmitter {
             }
 
             // This allows the browser to download representation content
-            const params = Object.assign({ response_content_disposition_type: 'attachment' }, queryParams);
+            const params = { response_content_disposition_type: 'attachment', ...queryParams };
             const downloadUrl = appendQueryParams(
                 this.viewer.createContentUrlWithAuthParams(contentUrlTemplate, this.viewer.getAssetPath()),
-                params
+                params,
             );
 
-            DownloadReachability.downloadWithReachabilityCheck(downloadUrl);
+            this.api.reachability.downloadWithReachabilityCheck(downloadUrl);
 
             // Otherwise, get the content download URL of the original file and download
         } else {
             const getDownloadUrl = appendQueryParams(getDownloadURL(this.file.id, apiHost), queryParams);
-            get(getDownloadUrl, this.getRequestHeaders()).then((data) => {
-                const downloadUrl = appendQueryParams(data.download_url, queryParams);
-                DownloadReachability.downloadWithReachabilityCheck(downloadUrl);
-            });
+            this.api
+                .get(getDownloadUrl, { headers: this.getRequestHeaders() })
+                .then(data => {
+                    const downloadUrl = appendQueryParams(data.download_url, queryParams);
+                    this.api.reachability.downloadWithReachabilityCheck(downloadUrl);
+                })
+                .catch(error => {
+                    const code = getProp(error, 'response.data.code');
+                    const msg =
+                        code === ERROR_CODE_403_FORBIDDEN_BY_POLICY ? downloadErrorDueToPolicyMsg : downloadErrorMsg;
+                    this.ui.showNotification(msg);
+                });
         }
 
-        const downloadAttemptEvent = {
+        this.emitLogEvent(PREVIEW_METRIC, {
             event_name: PREVIEW_DOWNLOAD_ATTEMPT_EVENT,
             value: this.viewer ? this.viewer.getLoadStatus() : null,
-            ...this.createLogEvent()
-        };
-
-        this.emit(PREVIEW_METRIC, downloadAttemptEvent);
+        });
     }
 
     /**
@@ -631,7 +651,7 @@ class Preview extends EventEmitter {
             file,
             token,
             // Viewers may ignore this representation when prefetching a preload
-            representation: loader.determineRepresentation(file, viewer)
+            representation: loader.determineRepresentation(file, viewer),
         };
 
         // If we are prefetching for preload, shared link and password are not set on
@@ -649,7 +669,7 @@ class Preview extends EventEmitter {
                 // Prefetch preload if explicitly requested or if viewer has 'preload' option set
                 preload: preload || !!viewerInstance.getViewerOption('preload'),
                 // Don't prefetch file's representation content if this is for preload
-                content: !preload
+                content: !preload,
             });
         }
     }
@@ -663,19 +683,19 @@ class Preview extends EventEmitter {
      */
     prefetchViewers(viewerNames = []) {
         this.getViewers()
-            .filter((viewer) => viewerNames.indexOf(viewer.NAME) !== -1)
-            .forEach((viewer) => {
+            .filter(viewer => viewerNames.indexOf(viewer.NAME) !== -1)
+            .forEach(viewer => {
                 const viewerInstance = new viewer.CONSTRUCTOR(
                     this.createViewerOptions({
-                        viewer
-                    })
+                        viewer,
+                    }),
                 );
 
                 if (typeof viewerInstance.prefetch === 'function') {
                     viewerInstance.prefetch({
                         assets: true,
                         preload: false,
-                        content: false
+                        content: false,
                     });
                 }
             });
@@ -723,7 +743,7 @@ class Preview extends EventEmitter {
             const bareFile = { id: fileId };
             if (fileVersionId) {
                 bareFile.file_version = {
-                    id: fileVersionId
+                    id: fileVersionId,
                 };
             }
 
@@ -741,7 +761,7 @@ class Preview extends EventEmitter {
             this.file = { id };
             if (file_version) {
                 this.file.file_version = {
-                    id: file_version.id
+                    id: file_version.id,
                 };
             }
             /* eslint-enable camelcase */
@@ -750,13 +770,15 @@ class Preview extends EventEmitter {
                 ERROR_CODE.BAD_INPUT,
                 __('error_generic'),
                 {},
-                'File is not a well-formed Box File object. See FILE_FIELDS in file.js for a list of required fields.'
+                'File is not a well-formed Box File object. See FILE_FIELDS in file.js for a list of required fields.',
             );
         }
 
-        // Retry up to RETRY_COUNT if we are reloading same file. If load is called during a preview when file version
-        // ID has been specified, count as a retry only if the current file verison ID matches that specified file
-        // version ID
+        // Start the preview duration timer when the user starts to perceive preview's load
+        const tag = Timer.createTag(this.file.id, LOAD_METRIC.previewLoadTime);
+        Timer.start(tag);
+
+        // If file version ID is specified, increment retry count if it matches current file version ID
         if (fileVersionId) {
             if (fileVersionId === currentFileVersionId) {
                 this.retryCount += 1;
@@ -764,17 +786,39 @@ class Preview extends EventEmitter {
                 this.retryCount = 0;
             }
 
-            // Otherwise, count this as a retry if the file ID we are trying to load matches the current file ID
+            // Otherwise, increment retry count if file ID to load matches current file ID
         } else if (this.file.id === currentFileId) {
             this.retryCount += 1;
+
+            // Otherwise, reset retry count
         } else {
             this.retryCount = 0;
         }
 
-        // Fetch access tokens before proceeding
-        getTokens(this.file.id, this.previewOptions.token)
-            .then(this.handleTokenResponse)
-            .catch(this.handleFetchError);
+        // Eject any previous interceptors
+        this.api.ejectInterceptors();
+
+        // Check to see if there are http interceptors and load them
+        if (this.options.responseInterceptor) {
+            this.api.addResponseInterceptor(this.options.responseInterceptor);
+        }
+
+        if (this.options.requestInterceptor) {
+            this.api.addRequestInterceptor(this.options.requestInterceptor);
+        }
+
+        // @TODO: This may not be the best way to detect if we are offline. Make sure this works well if we decided to
+        // combine Box Elements + Preview. This could potentially break if we have Box Elements fetch the file object
+        // and pass the well-formed file object directly to the preview library to render.
+        const isPreviewOffline = typeof fileIdOrFile === 'object' && this.options.skipServerUpdate;
+        if (isPreviewOffline) {
+            this.handleTokenResponse({});
+        } else {
+            // Fetch access tokens before proceeding
+            getTokens(this.file.id, this.previewOptions.token)
+                .then(this.handleTokenResponse)
+                .catch(this.handleFetchError);
+        }
     }
 
     /**
@@ -785,19 +829,18 @@ class Preview extends EventEmitter {
      * @return {void}
      */
     handleTokenResponse(tokenMap) {
-        // If this is a retry, short-circuit and load from server
-        if (this.retryCount > 0) {
-            this.loadFromServer();
-            return;
-        }
-
         // Set the authorization token
         this.options.token = tokenMap[this.file.id];
 
-        this.setupUI();
+        // Do nothing if container is already setup and in the middle of retrying
+        if (!(this.ui.isSetup() && this.retryCount > 0)) {
+            this.setupUI();
+        }
 
         // Load from cache if the current file is valid, otherwise load file info from server
         if (checkFileValid(this.file)) {
+            // Save file in cache. This also adds the 'ORIGINAL' representation. It is required to preview files offline
+            cacheFile(this.cache, this.file);
             this.loadFromCache();
         } else {
             this.loadFromServer();
@@ -817,7 +860,7 @@ class Preview extends EventEmitter {
             this.keydownHandler,
             this.navigateLeft,
             this.navigateRight,
-            this.throttledMousemoveHandler
+            this.throttledMousemoveHandler,
         );
 
         // Set up the notification
@@ -843,7 +886,7 @@ class Preview extends EventEmitter {
      * @return {void}
      */
     parseOptions(previewOptions) {
-        const options = Object.assign({}, previewOptions);
+        const options = { ...previewOptions };
 
         // Reset all options
         this.options = {};
@@ -866,14 +909,23 @@ class Preview extends EventEmitter {
         // Show or hide the header
         this.options.header = options.header || 'light';
 
+        // Header element for when using external header outside of the provided container
+        this.options.headerElement = options.headerElement;
+
         // Custom logo URL
         this.options.logoUrl = options.logoUrl || '';
+
+        // Allow autofocussing
+        this.options.autoFocus = options.autoFocus !== false;
 
         // Whether download button should be shown
         this.options.showDownload = !!options.showDownload;
 
-        // Whether annotations and annotation controls should be shown
+        // Whether annotations v2 should be shown
         this.options.showAnnotations = !!options.showAnnotations;
+
+        // Whether annotations v4 buttons should be shown in toolbar
+        this.options.showAnnotationsControls = !!options.showAnnotationsControls;
 
         // Enable or disable hotkeys
         this.options.useHotkeys = options.useHotkeys !== false;
@@ -921,11 +973,20 @@ class Preview extends EventEmitter {
         // Options that are applicable to certain file ids
         this.options.fileOptions = options.fileOptions || {};
 
+        // Option to enable use of thumbnails sidebar for document types
+        this.options.enableThumbnailsSidebar = !!options.enableThumbnailsSidebar;
+
         // Prefix any user created loaders before our default ones
         this.loaders = (options.loaders || []).concat(loaderList);
 
+        // Add the request interceptor to the preview instance
+        this.options.requestInterceptor = options.requestInterceptor;
+
+        // Add the response interceptor to the preview instance
+        this.options.responseInterceptor = options.responseInterceptor;
+
         // Disable or enable viewers based on viewer options
-        Object.keys(this.options.viewers).forEach((viewerName) => {
+        Object.keys(this.options.viewers).forEach(viewerName => {
             const isDisabled = this.options.viewers[viewerName].disabled;
 
             // Explicitly check for booleans, disabled:false will override any default disabling
@@ -945,9 +1006,15 @@ class Preview extends EventEmitter {
      * @return {Object} combined options
      */
     createViewerOptions(moreOptions) {
-        return cloneDeep(
-            Object.assign({}, this.options, moreOptions, { location: this.location, cache: this.cache, ui: this.ui })
-        );
+        return cloneDeep({
+            ...this.options,
+            ...moreOptions,
+            api: this.api,
+            location: this.location,
+            cache: this.cache,
+            ui: this.ui,
+            refreshToken: this.refreshToken,
+        });
     }
 
     /**
@@ -977,12 +1044,10 @@ class Preview extends EventEmitter {
      */
     loadFromServer() {
         const { apiHost, previewWMPref, queryParams } = this.options;
-        const params = Object.assign(
-            {
-                watermark_preference: convertWatermarkPref(previewWMPref)
-            },
-            queryParams
-        );
+        const params = {
+            watermark_preference: convertWatermarkPref(previewWMPref),
+            ...queryParams,
+        };
 
         const fileVersionId = this.getFileOption(this.file.id, FILE_OPTION_FILE_VERSION_ID) || '';
 
@@ -990,7 +1055,8 @@ class Preview extends EventEmitter {
         Timer.start(tag);
 
         const fileInfoUrl = appendQueryParams(getURL(this.file.id, fileVersionId, apiHost), params);
-        get(fileInfoUrl, this.getRequestHeaders())
+        this.api
+            .get(fileInfoUrl, { headers: this.getRequestHeaders() })
             .then(this.handleFileInfoResponse)
             .catch(this.handleFetchError);
     }
@@ -1027,18 +1093,6 @@ class Preview extends EventEmitter {
             // Set current file to file data from server and update file in logger
             this.file = file;
             this.logger.setFile(file);
-
-            // If file is not downloadable, trigger an error
-            if (file.is_download_available === false) {
-                const details = isBoxWebApp()
-                    ? {
-                        linkText: __('link_contact_us'),
-                        linkUrl: SUPPORT_URL
-                    }
-                    : {};
-                const error = new PreviewError(ERROR_CODE.NOT_DOWNLOADABLE, __('error_not_downloadable'), details);
-                throw error;
-            }
 
             // Keep reference to previously cached file version
             const cachedFile = getCachedFile(this.cache, { fileVersionId: responseFileVersionId });
@@ -1087,6 +1141,17 @@ class Preview extends EventEmitter {
             return;
         }
 
+        // Check if file is downloadable
+        if (this.file.is_download_available === false) {
+            const details = isBoxWebApp()
+                ? {
+                      linkText: __('link_contact_us'),
+                      linkUrl: SUPPORT_URL,
+                  }
+                : {};
+            throw new PreviewError(ERROR_CODE.NOT_DOWNLOADABLE, __('error_not_downloadable'), details);
+        }
+
         // Check if preview permissions exist
         if (!checkPermission(this.file, PERMISSION_PREVIEW)) {
             throw new PreviewError(ERROR_CODE.PERMISSIONS_PREVIEW, __('error_permissions'));
@@ -1103,14 +1168,20 @@ class Preview extends EventEmitter {
         // If no loader, then check to see if any of our viewers support this file type.
         // If they do, we know the account can't preview this file type. If they can't we know this file type is unsupported.
         if (!loader) {
-            const isFileTypeSupported = this.getViewers().find((viewer) => {
+            const isFileTypeSupported = this.getViewers().find(viewer => {
                 return viewer.EXT.indexOf(this.file.extension) > -1;
             });
 
-            const code = isFileTypeSupported ? ERROR_CODE.ACCOUNT : ERROR_CODE.UNSUPPORTED_FILE_TYPE;
-            const message = isFileTypeSupported
-                ? __('error_account')
-                : replacePlaceholders(__('error_unsupported'), [(this.file.extension || '').toUpperCase()]);
+            let code;
+            let message;
+            // If the file type is supported, then the default error is account related
+            if (isFileTypeSupported) {
+                code = ERROR_CODE.ACCOUNT;
+                message = __('error_account');
+            } else {
+                code = ERROR_CODE.UNSUPPORTED_FILE_TYPE;
+                message = __('error_unsupported');
+            }
 
             throw new PreviewError(code, message);
         }
@@ -1129,13 +1200,16 @@ class Preview extends EventEmitter {
             viewer,
             representation,
             container: this.container,
-            file: this.file
+            file: this.file,
         });
         viewerOptions.logger = this.logger; // Don't clone the logger since it needs to track metrics
         this.viewer = new viewer.CONSTRUCTOR(viewerOptions);
 
         // Add listeners for viewer events
         this.attachViewerListeners();
+
+        // Setup the viewer DOM
+        this.viewer.setup();
 
         // Load the representation into the viewer
         this.viewer.load();
@@ -1187,15 +1261,6 @@ class Preview extends EventEmitter {
             case VIEWER_EVENT.progressEnd:
                 this.ui.finishProgressBar();
                 break;
-            case VIEWER_EVENT.notificationShow:
-                this.ui.showNotification(data.data);
-                break;
-            case VIEWER_EVENT.notificationHide:
-                this.ui.hideNotification();
-                break;
-            case VIEWER_EVENT.mediaEndAutoplay:
-                this.navigateRight();
-                break;
             case VIEWER_EVENT.error:
                 // Do nothing since 'error' event was already caught, and will be emitted
                 // as a 'preview_error' event
@@ -1215,13 +1280,10 @@ class Preview extends EventEmitter {
      * @return {void}
      */
     handleViewerMetrics(data) {
-        const formattedEvent = {
+        this.emitLogEvent(PREVIEW_METRIC, {
             event_name: data.event,
             value: data.data,
-            ...this.createLogEvent()
-        };
-
-        this.emit(PREVIEW_METRIC, formattedEvent);
+        });
     }
 
     /**
@@ -1234,20 +1296,21 @@ class Preview extends EventEmitter {
      */
     finishLoading(data = {}) {
         if (this.file && this.file.id) {
-            const tag = Timer.createTag(this.file.id, LOAD_METRIC.fullDocumentLoadTime);
-            Timer.stop(tag);
+            const contentLoadTag = Timer.createTag(this.file.id, LOAD_METRIC.contentLoadTime);
+            Timer.stop(contentLoadTag);
+            const previewLoadTag = Timer.createTag(this.file.id, LOAD_METRIC.previewLoadTime);
+            Timer.stop(previewLoadTag);
         }
 
         // Log now that loading is finished
-        this.emitLoadMetrics();
+        this.emitLoadMetrics(data);
 
-        // Show download and print buttons if user can download
         if (canDownload(this.file, this.options)) {
             this.ui.showDownloadButton(this.download);
+        }
 
-            if (checkFeature(this.viewer, 'print')) {
-                this.ui.showPrintButton(this.print);
-            }
+        if (this.canPrint()) {
+            this.ui.showPrintButton(this.print);
         }
 
         const { error } = data;
@@ -1259,12 +1322,12 @@ class Preview extends EventEmitter {
             this.emit(VIEWER_EVENT.load, {
                 error,
                 metrics: this.logger.done(this.count),
-                file: this.file
+                file: this.file,
             });
 
             // Explicit preview failure
-            this.handleViewerMetrics({
-                event: 'failure'
+            this.emitLogEvent(PREVIEW_METRIC, {
+                event_name: 'failure',
             });
 
             // Hookup for phantom JS health check
@@ -1279,13 +1342,16 @@ class Preview extends EventEmitter {
             this.emit(VIEWER_EVENT.load, {
                 viewer: this.viewer,
                 metrics: this.logger.done(this.count),
-                file: this.file
+                file: this.file,
             });
 
             // Explicit preview success
-            this.handleViewerMetrics({
-                event: 'success'
+            this.emitLogEvent(PREVIEW_METRIC, {
+                event_name: 'success',
             });
+
+            // Emit performance metrics after rendering has settled
+            setTimeout(this.emitPerfMetrics.bind(this), 3000);
 
             // If there wasn't an error and event logging is not disabled, use Events API to log a preview
             if (!this.options.disableEventLog) {
@@ -1304,7 +1370,7 @@ class Preview extends EventEmitter {
         }
 
         // Programmatically focus on the viewer after it loads
-        if (this.viewer && this.viewer.containerEl) {
+        if (this.options.autoFocus && this.viewer && this.viewer.containerEl) {
             this.viewer.containerEl.focus();
         }
 
@@ -1329,15 +1395,17 @@ class Preview extends EventEmitter {
         this.logRetryCount = this.logRetryCount || 0;
 
         const { apiHost, token, sharedLink, sharedLinkPassword } = options;
-        const headers = getHeaders({}, token, sharedLink, sharedLinkPassword);
-
-        post(`${apiHost}/2.0/events`, headers, {
+        const data = {
             event_type: 'preview',
             source: {
                 type: 'file',
-                id: fileId
-            }
-        })
+                id: fileId,
+            },
+        };
+        const headers = getHeaders({}, token, sharedLink, sharedLinkPassword);
+
+        this.api
+            .post(`${apiHost}/2.0/events`, data, { headers })
             .then(() => {
                 // Reset retry count after successfully logging
                 this.logRetryCount = 0;
@@ -1373,7 +1441,7 @@ class Preview extends EventEmitter {
         // Nuke the cache
         uncacheFile(this.cache, this.file);
 
-        // Check if hit the retry limit
+        // Check if we hit the retry limit for fetching file info
         if (this.retryCount > RETRY_COUNT) {
             let errorCode = ERROR_CODE.EXCEEDED_RETRY_LIMIT;
             let errorMessage = __('error_refresh');
@@ -1415,8 +1483,8 @@ class Preview extends EventEmitter {
             this.createViewerOptions({
                 viewer: { NAME: 'Error' },
                 container: this.container,
-                file: this.file
-            })
+                file: this.file,
+            }),
         );
     }
 
@@ -1433,7 +1501,8 @@ class Preview extends EventEmitter {
         this.emitPreviewError(err);
 
         // If preview is closed don't do anything
-        if (!this.open) {
+        const isSilent = getProp(err, 'details.silent', false);
+        if (!this.open || isSilent) {
             return;
         }
 
@@ -1446,36 +1515,20 @@ class Preview extends EventEmitter {
         // Destroy anything still showing
         this.destroy();
 
+        // Setup the preview ui for next/previous buttons
+        this.setupUI();
+
         // Instantiate the error viewer
         this.viewer = this.getErrorViewer();
+
+        // Setup error viewer
+        this.viewer.setup();
 
         // Add listeners for viewer events
         this.attachViewerListeners();
 
         // Load the error viewer
         this.viewer.load(err);
-    }
-
-    /**
-     * Create a generic log Object.
-     *
-     * @private
-     * @return {Object} Log details for viewer session and current file.
-     */
-    createLogEvent() {
-        const file = this.file || {};
-        const log = {
-            timestamp: getISOTime(),
-            file_id: getProp(file, 'id', ''),
-            file_version_id: getProp(file, 'file_version.id', ''),
-            content_type: getProp(this.viewer, 'options.viewer.NAME', ''),
-            extension: file.extension || '',
-            locale: getProp(this.location, 'locale', ''),
-            rep_type: getProp(this.viewer, 'options.representation.representation', '').toLowerCase(),
-            ...getClientLogDetails()
-        };
-
-        return log;
     }
 
     /**
@@ -1496,12 +1549,9 @@ class Preview extends EventEmitter {
         sanitizedError.displayMessage = stripAuthFromString(displayMessage);
         sanitizedError.message = stripAuthFromString(message);
 
-        const errorLog = {
+        this.emitLogEvent(PREVIEW_ERROR, {
             error: sanitizedError,
-            ...this.createLogEvent()
-        };
-
-        this.emit(PREVIEW_ERROR, errorLog);
+        });
     }
 
     /**
@@ -1510,47 +1560,86 @@ class Preview extends EventEmitter {
      * A value of 0 means that the load milestone was never reached.
      *
      * @private
+     * @param {string} [encoding] - Type of encoding applied to the downloaded content. ie) GZIP
      * @return {void}
      */
-    emitLoadMetrics() {
+    emitLoadMetrics({ encoding } = {}) {
         if (!this.file || !this.file.id) {
             return;
         }
 
-        const infoTag = Timer.createTag(this.file.id, LOAD_METRIC.fileInfoTime);
-        const convertTag = Timer.createTag(this.file.id, LOAD_METRIC.convertTime);
-        const downloadTag = Timer.createTag(this.file.id, LOAD_METRIC.downloadResponseTime);
-        const fullLoadTag = Timer.createTag(this.file.id, LOAD_METRIC.fullDocumentLoadTime);
+        const { id } = this.file;
 
-        // Do nothing if there is nothing worth logging.
+        const infoTag = Timer.createTag(id, LOAD_METRIC.fileInfoTime);
+        const convertTag = Timer.createTag(id, LOAD_METRIC.convertTime);
+        const downloadTag = Timer.createTag(id, LOAD_METRIC.downloadResponseTime);
+        const contentLoadTag = Timer.createTag(id, LOAD_METRIC.contentLoadTime);
+        const previewLoadTag = Timer.createTag(id, LOAD_METRIC.previewLoadTime);
+
         const infoTime = Timer.get(infoTag) || {};
-        if (!infoTime.elapsed) {
-            Timer.reset([infoTag, convertTag, downloadTag, fullLoadTag]);
-            return;
+        const convertTime = Timer.get(convertTag) || {};
+        const downloadTime = Timer.get(downloadTag) || {};
+        const contentLoadTime = Timer.get(contentLoadTag) || {};
+        const previewLoadTime = Timer.get(previewLoadTag) || {};
+
+        this.emitLogEvent(PREVIEW_METRIC, {
+            encoding,
+            event_name: LOAD_METRIC.previewLoadEvent,
+            value: previewLoadTime.elapsed || 0,
+            [LOAD_METRIC.fileInfoTime]: infoTime.elapsed || 0,
+            [LOAD_METRIC.convertTime]: convertTime.elapsed || 0,
+            [LOAD_METRIC.downloadResponseTime]: downloadTime.elapsed || 0,
+            [LOAD_METRIC.contentLoadTime]: contentLoadTime.elapsed || 0,
+        });
+
+        Timer.reset([infoTag, convertTag, downloadTag, contentLoadTag, previewLoadTag]);
+    }
+
+    /**
+     * Emit events to log preview-specific performance metrics if they exist and are non-zero
+     *
+     * @private
+     * @return {void}
+     */
+    emitPerfMetrics() {
+        const { fcp, lcp } = this.perf.report();
+
+        if (fcp) {
+            this.emitLogEvent(PREVIEW_METRIC, {
+                event_name: 'preview_perf_fcp',
+                value: fcp,
+            });
         }
 
-        const timerList = [
-            infoTime,
-            Timer.get(convertTag) || {},
-            Timer.get(downloadTag) || {},
-            Timer.get(fullLoadTag) || {}
-        ];
-        const times = timerList.map((timer) => parseInt(timer.elapsed, 10) || 0);
-        const total = times.reduce((acc, current) => acc + current);
+        if (lcp) {
+            this.emitLogEvent(PREVIEW_METRIC, {
+                event_name: 'preview_perf_lcp',
+                value: lcp,
+            });
+        }
+    }
 
-        const event = {
-            event_name: LOAD_METRIC.previewLoadEvent,
-            value: total, // Sum of all available load times.
-            [LOAD_METRIC.fileInfoTime]: times[0],
-            [LOAD_METRIC.convertTime]: times[1],
-            [LOAD_METRIC.downloadResponseTime]: times[2],
-            [LOAD_METRIC.fullDocumentLoadTime]: times[3],
-            ...this.createLogEvent()
-        };
+    /**
+     * Emit an event that includes a standard set of preview-specific properties for logging
+     *
+     * @private
+     * @param {string} name - event name
+     * @param {Object} payload - event payload object
+     */
+    emitLogEvent(name, payload = {}) {
+        const file = this.file || {};
 
-        this.emit(PREVIEW_METRIC, event);
-
-        Timer.reset([infoTag, convertTag, downloadTag, fullLoadTag]);
+        this.emit(name, {
+            ...payload,
+            content_type: getProp(this.viewer, 'options.viewer.NAME', ''),
+            extension: file.extension || '',
+            file_id: getProp(file, 'id', ''),
+            file_version_id: getProp(file, 'file_version.id', ''),
+            locale: getProp(this.location, 'locale', ''),
+            rep_type: getProp(this.viewer, 'options.representation.representation', '').toLowerCase(),
+            timestamp: getISOTime(),
+            ...getClientLogDetails(),
+        });
     }
 
     /**
@@ -1564,14 +1653,14 @@ class Preview extends EventEmitter {
         const videoHint =
             Browser.canPlayDash() && !this.disabledViewers.Dash ? X_REP_HINT_VIDEO_DASH : X_REP_HINT_VIDEO_MP4;
         const headers = {
-            'X-Rep-Hints': `${X_REP_HINT_BASE}${X_REP_HINT_DOC_THUMBNAIL}${X_REP_HINT_IMAGE}${videoHint}`
+            'X-Rep-Hints': `${X_REP_HINT_BASE}${X_REP_HINT_DOC_THUMBNAIL}${X_REP_HINT_IMAGE}${videoHint}`,
         };
 
         return getHeaders(
             headers,
             token || this.options.token,
             this.options.sharedLink,
-            this.options.sharedLinkPassword
+            this.options.sharedLinkPassword,
         );
     }
 
@@ -1584,12 +1673,10 @@ class Preview extends EventEmitter {
      */
     prefetchNextFiles() {
         const { apiHost, previewWMPref, queryParams, skipServerUpdate } = this.options;
-        const params = Object.assign(
-            {
-                watermark_preference: convertWatermarkPref(previewWMPref)
-            },
-            queryParams
-        );
+        const params = {
+            watermark_preference: convertWatermarkPref(previewWMPref),
+            ...queryParams,
+        };
 
         // Don't bother prefetching when there aren't more files or we need to skip server update
         if (this.collection.length < 2 || skipServerUpdate) {
@@ -1603,7 +1690,7 @@ class Preview extends EventEmitter {
         const currentIndex = this.collection.indexOf(this.file.id);
         const filesToPrefetch = this.collection
             .slice(currentIndex + 1, currentIndex + PREFETCH_COUNT + 1)
-            .filter((fileId) => this.prefetchedCollection.indexOf(fileId) === -1);
+            .filter(fileId => this.prefetchedCollection.indexOf(fileId) === -1);
 
         // Check if we need to prefetch anything
         if (filesToPrefetch.length === 0) {
@@ -1612,8 +1699,8 @@ class Preview extends EventEmitter {
 
         // Get access tokens for all files we should be prefetching
         getTokens(filesToPrefetch, this.previewOptions.token)
-            .then((tokenMap) => {
-                filesToPrefetch.forEach((fileId) => {
+            .then(tokenMap => {
+                filesToPrefetch.forEach(fileId => {
                     const token = tokenMap[fileId];
 
                     // Append optional query params
@@ -1621,8 +1708,9 @@ class Preview extends EventEmitter {
                     const fileInfoUrl = appendQueryParams(getURL(fileId, fileVersionId, apiHost), params);
 
                     // Prefetch and cache file information and content
-                    get(fileInfoUrl, this.getRequestHeaders(token))
-                        .then((file) => {
+                    this.api
+                        .get(fileInfoUrl, { headers: this.getRequestHeaders(token) })
+                        .then(file => {
                             // Cache file info
                             cacheFile(this.cache, file);
                             this.prefetchedCollection.push(file.id);
@@ -1630,10 +1718,10 @@ class Preview extends EventEmitter {
                             // Prefetch assets and content for file
                             this.prefetch({
                                 fileId: file.id,
-                                token
+                                token,
                             });
                         })
-                        .catch((err) => {
+                        .catch(err => {
                             const message = `Error prefetching file ID ${fileId} - ${err}`;
                             // eslint-disable-next-line
                             console.error(message);
@@ -1643,7 +1731,7 @@ class Preview extends EventEmitter {
                         });
                 });
             })
-            .catch((err) => {
+            .catch(err => {
                 const message = `Error prefetching files - ${err}`;
                 // eslint-disable-next-line
                 console.error(message);
@@ -1652,9 +1740,9 @@ class Preview extends EventEmitter {
                     ERROR_CODE.PREFETCH_FILE,
                     message,
                     {
-                        fileIds: filesToPrefetch
+                        fileIds: filesToPrefetch,
                     },
-                    err.message
+                    err.message,
                 );
                 this.emitPreviewError(error);
             });
@@ -1696,7 +1784,7 @@ class Preview extends EventEmitter {
                 }, MOUSEMOVE_THROTTLE_MS);
             },
             MOUSEMOVE_THROTTLE_MS - 500,
-            true
+            true,
         );
     }
 
@@ -1754,7 +1842,7 @@ class Preview extends EventEmitter {
      * @return {Object|null} Matching loader
      */
     getLoader(file) {
-        return this.loaders.find((loader) => loader.canLoad(file, Object.keys(this.disabledViewers)));
+        return this.loaders.find(loader => loader.canLoad(file, Object.keys(this.disabledViewers)));
     }
 
     /**
@@ -1824,6 +1912,21 @@ class Preview extends EventEmitter {
         const fileId = typeof fileIdOrFile === 'string' ? fileIdOrFile : fileIdOrFile.id;
         return getProp(this.previewOptions, `fileOptions.${fileId}.${optionName}`);
     }
+
+    /**
+     * Refresh the access token
+     *
+     * @private
+     * @return {Promise<string|Error>}
+     */
+    refreshToken = () => {
+        if (typeof this.previewOptions.token !== 'function') {
+            return Promise.reject(new Error('Token is not a function and cannot be refreshed.'));
+        }
+        return getTokens(this.file.id, this.previewOptions.token).then(
+            tokenOrTokenMap => tokenOrTokenMap[this.file.id],
+        );
+    };
 }
 
 global.Box = global.Box || {};
